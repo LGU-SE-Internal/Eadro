@@ -8,7 +8,7 @@ import logging
 import numpy as np
 from sklearn.metrics import ndcg_score
 
-from model import MainModel
+from .model import MainModel
 
 
 class BaseModel(nn.Module):

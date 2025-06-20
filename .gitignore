@@ -3,3 +3,4 @@ sdata
 chunks
 __pycache__
 *.pyc
+result

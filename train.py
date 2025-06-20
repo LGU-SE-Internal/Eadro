@@ -3,12 +3,13 @@
 改进版主运行脚本 - 规范化的Eadro模型训练脚本
 """
 
-import argparse
 import logging
 import os
 from pathlib import Path
+from typing import List, Optional
 import torch
 import dgl
+import typer
 from torch.utils.data import Dataset, DataLoader
 
 from codes.utils import *
@@ -85,29 +86,24 @@ def setup_logging(log_file: str = None):
 
 
 def load_data(config: Config) -> tuple:
-    """加载数据"""
     data_dir = Path(config.get("chunks_dir")) / config.get("data")
 
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    # 加载元数据
     metadata_path = data_dir / "metadata.json"
     if metadata_path.exists():
         metadata = read_json(str(metadata_path))
     else:
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
-    # 更新配置
     config.set("event_num", metadata["event_num"])
     config.set("node_num", metadata["node_num"])
     config.set("metric_num", metadata["metric_num"])
     config.set("chunk_length", metadata["chunk_length"])
 
-    # 加载训练和测试数据
     train_chunks, test_chunks = load_chunks(str(data_dir))
 
-    # 获取图结构
     edges = metadata.get("edges", [])
 
     return train_chunks, test_chunks, edges, metadata
@@ -116,7 +112,6 @@ def load_data(config: Config) -> tuple:
 def create_data_loaders(
     train_chunks: dict, test_chunks: dict, node_num: int, edges: list, config: Config
 ) -> tuple:
-    """创建数据加载器"""
     train_dataset = ChunkDataset(train_chunks, node_num, edges)
     test_dataset = ChunkDataset(test_chunks, node_num, edges)
 
@@ -157,9 +152,6 @@ def train_model(config: Config, evaluation_epoch: int = 10) -> tuple:
 
     # 创建模型
     model = BaseModel(
-        event_num=config.get("event_num"),
-        metric_num=config.get("metric_num"),
-        node_num=config.get("node_num"),
         device=device,
         **config.to_dict(),
     )
@@ -172,116 +164,83 @@ def train_model(config: Config, evaluation_epoch: int = 10) -> tuple:
     return scores, converge
 
 
-def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description="Eadro Model Training")
+app = typer.Typer()
 
+
+@app.command()
+def main(
     # 训练参数
-    parser.add_argument("--random_seed", default=42, type=int, help="Random seed")
-    parser.add_argument(
-        "--gpu", default=True, type=lambda x: x.lower() == "true", help="Use GPU"
-    )
-    parser.add_argument("--epochs", default=50, type=int, help="Training epochs")
-    parser.add_argument("--batch_size", default=256, type=int, help="Batch size")
-    parser.add_argument("--lr", default=0.001, type=float, help="Learning rate")
-    parser.add_argument(
-        "--patience", default=10, type=int, help="Early stopping patience"
-    )
-
+    random_seed: int = typer.Option(42, help="Random seed"),
+    gpu: bool = typer.Option(True, help="Use GPU"),
+    epochs: int = typer.Option(50, help="Training epochs"),
+    batch_size: int = typer.Option(256, help="Batch size"),
+    lr: float = typer.Option(0.001, help="Learning rate"),
+    patience: int = typer.Option(10, help="Early stopping patience"),
+    
     # 融合参数
-    parser.add_argument(
-        "--self_attn",
-        default=True,
-        type=lambda x: x.lower() == "true",
-        help="Use self attention",
-    )
-    parser.add_argument("--fuse_dim", default=128, type=int, help="Fusion dimension")
-    parser.add_argument(
-        "--alpha", default=0.5, type=float, help="Loss combination weight"
-    )
-    parser.add_argument(
-        "--locate_hiddens",
-        default=[64],
-        type=int,
-        nargs="+",
-        help="Localization hidden dims",
-    )
-    parser.add_argument(
-        "--detect_hiddens",
-        default=[64],
-        type=int,
-        nargs="+",
-        help="Detection hidden dims",
-    )
-
+    self_attn: bool = typer.Option(True, help="Use self attention"),
+    fuse_dim: int = typer.Option(128, help="Fusion dimension"),
+    alpha: float = typer.Option(0.5, help="Loss combination weight"),
+    locate_hiddens: List[int] = typer.Option([64], help="Localization hidden dims"),
+    detect_hiddens: List[int] = typer.Option([64], help="Detection hidden dims"),
+    
     # 源模型参数
-    parser.add_argument(
-        "--log_dim", default=16, type=int, help="Log embedding dimension"
-    )
-    parser.add_argument(
-        "--trace_kernel_sizes",
-        default=[2],
-        type=int,
-        nargs="+",
-        help="Trace conv kernel sizes",
-    )
-    parser.add_argument(
-        "--trace_hiddens",
-        default=[64],
-        type=int,
-        nargs="+",
-        help="Trace hidden dimensions",
-    )
-    parser.add_argument(
-        "--metric_kernel_sizes",
-        default=[2],
-        type=int,
-        nargs="+",
-        help="Metric conv kernel sizes",
-    )
-    parser.add_argument(
-        "--metric_hiddens",
-        default=[64],
-        type=int,
-        nargs="+",
-        help="Metric hidden dimensions",
-    )
-    parser.add_argument(
-        "--graph_hiddens",
-        default=[64],
-        type=int,
-        nargs="+",
-        help="Graph hidden dimensions",
-    )
-    parser.add_argument(
-        "--attn_head", default=4, type=int, help="Attention heads for GAT"
-    )
-    parser.add_argument(
-        "--activation", default=0.2, type=float, help="LeakyReLU negative slope"
-    )
-
-    # 数据参数
-    parser.add_argument("--data", type=str, required=True, help="Data directory name")
-    parser.add_argument("--result_dir", default="../result/", help="Result directory")
-    parser.add_argument("--chunks_dir", default="../chunks/", help="Chunks directory")
-
-    # 配置文件
-    parser.add_argument("--config", type=str, help="Config file path")
-
-    args = parser.parse_args()
+    log_dim: int = typer.Option(16, help="Log embedding dimension"),
+    trace_kernel_sizes: List[int] = typer.Option([2], help="Trace conv kernel sizes"),
+    trace_hiddens: List[int] = typer.Option([64], help="Trace hidden dimensions"),
+    metric_kernel_sizes: List[int] = typer.Option([2], help="Metric conv kernel sizes"),
+    metric_hiddens: List[int] = typer.Option([64], help="Metric hidden dimensions"),
+    graph_hiddens: List[int] = typer.Option([64], help="Graph hidden dimensions"),
+    attn_head: int = typer.Option(4, help="Attention heads for GAT"),
+    activation: float = typer.Option(0.2, help="LeakyReLU negative slope"),
+    data: str = typer.Option(..., help="Data directory name"),
+    result_dir: str = typer.Option("result/", help="Result directory"),
+    chunks_dir: str = typer.Option("chunks/", help="Chunks directory"),
+    config_file: Optional[str] = typer.Option(None, "--config", help="Config file path"),
+):
+    
+    config_dict = {
+        "random_seed": random_seed,
+        "gpu": gpu,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "lr": lr,
+        "patience": patience,
+        "self_attn": self_attn,
+        "fuse_dim": fuse_dim,
+        "alpha": alpha,
+        "locate_hiddens": locate_hiddens,
+        "detect_hiddens": detect_hiddens,
+        "log_dim": log_dim,
+        "trace_kernel_sizes": trace_kernel_sizes,
+        "trace_hiddens": trace_hiddens,
+        "metric_kernel_sizes": metric_kernel_sizes,
+        "metric_hiddens": metric_hiddens,
+        "graph_hiddens": graph_hiddens,
+        "attn_head": attn_head,
+        "activation": activation,
+        "data": data,
+        "result_dir": result_dir,
+        "chunks_dir": chunks_dir,
+    }
 
     # 创建配置
-    if args.config and Path(args.config).exists():
-        config = Config(args.config)
+    if config_file and Path(config_file).exists():
+        config = Config(config_file)
+        # 用命令行参数更新配置文件中的值
+        for key, value in config_dict.items():
+            config.set(key, value)
     else:
-        config = load_config_from_args(args)
+        config = Config()
+        for key, value in config_dict.items():
+            config.set(key, value)
 
     # 设置日志
-    result_dir = Path(config.get("result_dir"))
-    result_dir.mkdir(parents=True, exist_ok=True)
+    result_dir_path = Path(config.get("result_dir"))
+    result_dir_path.mkdir(parents=True, exist_ok=True)
 
     hash_id = dump_params(config.to_dict())
-    log_file = result_dir / hash_id / "running.log"
+    log_file = result_dir_path / hash_id / "running.log"
     setup_logging(str(log_file))
 
     logging.info(f"Starting training with hash_id: {hash_id}")
@@ -302,4 +261,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    app()
