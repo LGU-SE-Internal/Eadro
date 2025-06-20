@@ -1,16 +1,28 @@
-from torch.utils.data import Dataset, DataLoader
+import argparse
+import logging
+import os
 import torch
 import dgl
+from torch.utils.data import Dataset, DataLoader
+
+from utils import *
+from base import BaseModel
 
 
-class chunkDataset(Dataset):  # [node_num, T, else]
+class ChunkDataset(Dataset):  # [node_num, T, else]
     def __init__(self, chunks, node_num, edges):
         self.data = []
         self.idx2id = {}
         for idx, chunk_id in enumerate(chunks.keys()):
             self.idx2id[idx] = chunk_id
             chunk = chunks[chunk_id]
-            graph = dgl.graph(edges, num_nodes=node_num)
+            try:
+                graph = dgl.graph(edges, num_nodes=node_num)
+            except Exception:
+                # Fallback for different DGL versions
+                graph = dgl.DGLGraph()
+                graph.add_nodes(node_num)
+                graph.add_edges(edges[0], edges[1])
             graph.ndata["logs"] = torch.FloatTensor(chunk["logs"])
             graph.ndata["metrics"] = torch.FloatTensor(chunk["metrics"])
             graph.ndata["traces"] = torch.FloatTensor(chunk["traces"])
@@ -25,11 +37,6 @@ class chunkDataset(Dataset):  # [node_num, T, else]
     def __get_chunk_id__(self, idx):
         return self.idx2id[idx]
 
-
-from utils import *
-from base import BaseModel
-
-import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--random_seed", default=42, type=int)
@@ -66,8 +73,6 @@ parser.add_argument("--result_dir", default="../result/")
 
 params = vars(parser.parse_args())
 
-import logging
-
 
 def get_device(gpu):
     if gpu and torch.cuda.is_available():
@@ -101,8 +106,8 @@ def run(evaluation_epoch=10):
 
     train_chunks, test_chunks = load_chunks(data_dir)
 
-    train_data = chunkDataset(train_chunks, node_num)
-    test_data = chunkDataset(test_chunks, node_num)
+    train_data = ChunkDataset(train_chunks, node_num, edges=[])
+    test_data = ChunkDataset(test_chunks, node_num, edges=[])
 
     train_dl = DataLoader(
         train_data,

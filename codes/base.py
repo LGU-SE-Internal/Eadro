@@ -7,7 +7,6 @@ from torch import nn
 import logging
 
 from model import MainModel
-from sklearn.metrics import ndcg_score
 
 
 class BaseModel(nn.Module):

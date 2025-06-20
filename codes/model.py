@@ -1,7 +1,14 @@
+import math
+import numpy as np
 import torch
 from torch import nn
-from dgl.nn.pytorch import GATv2Conv
-from dgl.nn import GlobalAttentionPooling
+
+try:
+    from dgl.nn.pytorch.conv import GATv2Conv
+    from dgl.nn import GlobalAttentionPooling
+except ImportError:
+    # Fallback for different DGL versions
+    from dgl.nn import GATv2Conv, GlobalAttentionPooling
 
 
 class GraphModel(nn.Module):
@@ -99,9 +106,6 @@ class ConvNet(nn.Module):
         return out
 
 
-import math
-
-
 class SelfAttention(nn.Module):
     def __init__(self, input_size, seq_len):
         """
@@ -151,7 +155,6 @@ class TraceModel(nn.Module):
             num_channels=trace_hiddens,
             kernel_sizes=trace_kernel_sizes,
             dev=device,
-            dropout=trace_dropout,
         )
 
         self.self_attn = self_attn
@@ -159,7 +162,7 @@ class TraceModel(nn.Module):
             assert chunk_lenth is not None
             self.attn_layer = SelfAttention(self.out_dim, chunk_lenth)
 
-    def forward(self, x: torch.tensor):  # [bz, T, 1]
+    def forward(self, x: torch.Tensor):  # [bz, T, 1]
         hidden_states = self.net(x)
         if self.self_attn:
             return self.attn_layer(hidden_states)
@@ -188,7 +191,6 @@ class MetricModel(nn.Module):
             num_channels=metric_hiddens,
             kernel_sizes=metric_kernel_sizes,
             dev=device,
-            dropout=metric_dropout,
         )
 
         self.self_attn = self_attn
@@ -209,7 +211,7 @@ class LogModel(nn.Module):
         super(LogModel, self).__init__()
         self.embedder = nn.Linear(event_num, out_dim)
 
-    def forward(self, paras: torch.tensor):  # [bz, event_num]
+    def forward(self, paras: torch.Tensor):  # [bz, event_num]
         """
         Input:
             paras: mu with length of event_num
@@ -283,9 +285,6 @@ class FullyConnected(nn.Module):
         return self.net(x)
 
 
-import numpy as np
-
-
 class MainModel(nn.Module):
     def __init__(
         self, event_num, metric_num, node_num, device, alpha=0.5, debug=False, **kwargs
@@ -322,12 +321,12 @@ class MainModel(nn.Module):
         for i in range(batch_size):
             y_anomaly[i] = int(fault_indexs[i] > -1)
 
-        locate_logits = self.locator(embeddings)
-        locate_loss = self.locator_criterion(
+        locate_logits = self.localizer(embeddings)
+        locate_loss = self.localizer_criterion(
             locate_logits, fault_indexs.to(self.device)
         )
-        detect_logits = self.detector(embeddings)
-        detect_loss = self.decoder_criterion(detect_logits, y_anomaly)
+        detect_logits = self.detecter(embeddings)
+        detect_loss = self.detecter_criterion(detect_logits, y_anomaly)
         loss = self.alpha * detect_loss + (1 - self.alpha) * locate_loss
 
         node_probs = self.get_prob(locate_logits.detach()).cpu().numpy()
@@ -345,9 +344,14 @@ class MainModel(nn.Module):
 
         y_pred = []
         for i in range(batch_size):
-            detect_pred = detect_logits.detach().cpu().numpy().argmax(axis=1).squeeze()
-            if detect_pred[i] < 1:
-                y_pred.append([-1])
+            if detect_logits is not None:
+                detect_pred = (
+                    detect_logits.detach().cpu().numpy().argmax(axis=1).squeeze()
+                )
+                if detect_pred[i] < 1:
+                    y_pred.append([-1])
+                else:
+                    y_pred.append(node_list[i])
             else:
                 y_pred.append(node_list[i])
 
