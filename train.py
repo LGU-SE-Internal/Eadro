@@ -12,7 +12,13 @@ import dgl
 import typer
 from torch.utils.data import Dataset, DataLoader
 
-from src.eadro.utils import load_chunks, read_json, dump_params, dump_scores, seed_everything
+from src.eadro.utils import (
+    load_chunks,
+    read_json,
+    dump_params,
+    dump_scores,
+    seed_everything,
+)
 from src.eadro.base import BaseModel
 from src.eadro.config import Config, load_config_from_args
 
@@ -135,28 +141,21 @@ def create_data_loaders(
 
 
 def train_model(config: Config, evaluation_epoch: int = 10) -> tuple:
-    """训练模型"""
-    # 设置随机种子
     seed_everything(config.get("random_seed"))
 
-    # 获取设备
     device = get_device(config.get("gpu"))
 
-    # 加载数据
     train_chunks, test_chunks, edges, metadata = load_data(config)
 
-    # 创建数据加载器
     train_loader, test_loader = create_data_loaders(
         train_chunks, test_chunks, config.get("node_num"), edges, config
     )
 
-    # 创建模型
     model = BaseModel(
         device=device,
         **config.to_dict(),
     )
 
-    # 训练模型
     scores, converge = model.fit(
         train_loader, test_loader, evaluation_epoch=evaluation_epoch
     )
@@ -176,14 +175,12 @@ def main(
     batch_size: int = typer.Option(256, help="Batch size"),
     lr: float = typer.Option(0.001, help="Learning rate"),
     patience: int = typer.Option(10, help="Early stopping patience"),
-    
     # 融合参数
     self_attn: bool = typer.Option(True, help="Use self attention"),
     fuse_dim: int = typer.Option(128, help="Fusion dimension"),
     alpha: float = typer.Option(0.5, help="Loss combination weight"),
     locate_hiddens: List[int] = typer.Option([64], help="Localization hidden dims"),
     detect_hiddens: List[int] = typer.Option([64], help="Detection hidden dims"),
-    
     # 源模型参数
     log_dim: int = typer.Option(16, help="Log embedding dimension"),
     trace_kernel_sizes: List[int] = typer.Option([2], help="Trace conv kernel sizes"),
@@ -196,9 +193,10 @@ def main(
     data: str = typer.Option(..., help="Data directory name"),
     result_dir: str = typer.Option("result/", help="Result directory"),
     chunks_dir: str = typer.Option("chunks/", help="Chunks directory"),
-    config_file: Optional[str] = typer.Option(None, "--config", help="Config file path"),
+    config_file: Optional[str] = typer.Option(
+        None, "--config", help="Config file path"
+    ),
 ):
-    
     config_dict = {
         "random_seed": random_seed,
         "gpu": gpu,
@@ -224,10 +222,8 @@ def main(
         "chunks_dir": chunks_dir,
     }
 
-    # 创建配置
     if config_file and Path(config_file).exists():
         config = Config(config_file)
-        # 用命令行参数更新配置文件中的值
         for key, value in config_dict.items():
             config.set(key, value)
     else:
@@ -235,7 +231,6 @@ def main(
         for key, value in config_dict.items():
             config.set(key, value)
 
-    # 设置日志
     result_dir_path = Path(config.get("result_dir"))
     result_dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -247,12 +242,8 @@ def main(
     logging.info(f"Configuration: {config.to_dict()}")
 
     try:
-        # 训练模型
         scores, converge = train_model(config)
-
-        # 保存结果
         dump_scores(config.get("result_dir"), hash_id, scores, converge)
-
         logging.info(f"Training completed successfully. Hash ID: {hash_id}")
 
     except Exception as e:

@@ -1,11 +1,9 @@
-
 import json
 from pathlib import Path
 from typing import Dict, Any
 
 
 class Config:
-
     def __init__(self, config_path: str = None):
         self.default_config = {
             "random_seed": 42,

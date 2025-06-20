@@ -9,7 +9,7 @@ from tqdm import tqdm
 from drain3 import TemplateMiner
 from drain3.file_persistence import FilePersistence
 from drain3.template_miner_config import TemplateMinerConfig
-from utils import CacheManager
+from .utils import CacheManager
 import logging
 
 
@@ -54,6 +54,10 @@ class DataAdapter:
         self.node_id2service = {}
         self.log_templates = []
         self.metric_names = []
+        self.all_edges = set()  # 用于收集所有边
+        self.global_services = set()  # 用于收集所有服务
+        self.global_log_messages = []  # 用于收集所有日志消息
+        self.global_metrics = set()  # 用于收集所有指标
 
         self.drain = DrainProcesser(
             conf="drain.ini",
@@ -157,7 +161,7 @@ class DataAdapter:
         current_time = start_time
 
         while current_time < end_time:
-            window_end = current_time + pd.Timedelta(minutes=self.chunk_length)
+            window_end = current_time + pd.Timedelta(minutes=2)
             intervals.append((current_time, min(window_end, end_time)))
             current_time = window_end
 
@@ -478,28 +482,249 @@ class DataAdapter:
         print(f"  Edges: {len(edges)}")
         print(f"  Chunk length: {self.chunk_length}")
 
+    def collect_global_metadata(self, data_files: Dict[str, Path]) -> None:
+        """收集单个case的元数据，但不立即构建映射"""
+        # 收集服务
+        for file_type in [
+            "normal_log",
+            "abnormal_log",
+            "normal_metric",
+            "abnormal_metric",
+            "normal_trace",
+            "abnormal_trace",
+        ]:
+            if data_files[file_type].exists():
+                df = pd.read_parquet(data_files[file_type])
+                if "service_name" in df.columns:
+                    self.global_services.update(
+                        df[df["service_name"].notna()]["service_name"].unique()
+                    )
 
-def main():
-    data_root = Path("/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered/")
-    output_root = Path("chunks") 
+        # 收集指标
+        for file_type in ["normal_metric", "abnormal_metric"]:
+            if data_files[file_type].exists():
+                df = pd.read_parquet(data_files[file_type])
+                if "metric" in df.columns:
+                    self.global_metrics.update(df["metric"].unique())
 
-    cases = pd.read_parquet(
-        "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"
-    )
-    top_10 = cases["datapack"].head(10).tolist()
-    # top_10 = ["ts5-ts-route-service-partition-bbphlf"]
-    adapter = DataAdapter(chunk_length=1)
+        # 收集日志消息用于模板提取
+        for file_type in ["normal_log", "abnormal_log"]:
+            if data_files[file_type].exists():
+                df = pd.read_parquet(data_files[file_type])
+                if "message" in df.columns:
+                    messages = df["message"].astype(str).tolist()
+                    # 只保存非空消息
+                    valid_messages = [msg for msg in messages if msg.strip()]
+                    self.global_log_messages.extend(
+                        valid_messages[:1000]
+                    )  # 限制每个文件的消息数量
 
-    for data_pack_name in top_10:
+    def build_global_mappings(self) -> None:
+        """基于收集的全局数据构建映射"""
+        print(f"Building global mappings from {len(self.global_services)} services")
+
+        # 构建服务映射
+        self.service2node_id = {
+            service: idx for idx, service in enumerate(sorted(self.global_services))
+        }
+        self.node_id2service = {
+            idx: service for service, idx in self.service2node_id.items()
+        }
+
+        # 构建指标映射
+        self.metric_names = sorted(list(self.global_metrics))
+
+        # 处理日志模板
+        print(
+            f"Processing {len(self.global_log_messages)} log messages for template extraction"
+        )
+        processed_messages = []
+        batch_size = 1000
+        for i in range(0, len(self.global_log_messages), batch_size):
+            batch = self.global_log_messages[i : i + batch_size]
+            batch_processed = [self.drain(msg) for msg in batch if msg.strip()]
+            processed_messages.extend(batch_processed)
+
+            # 每处理一批后清理内存
+            if i % (batch_size * 10) == 0:
+                print(f"Processed {i + len(batch)} messages...")
+
+        message_counts = Counter(processed_messages)
+        valid_templates = [
+            (msg, count) for msg, count in message_counts.items() if msg.strip()
+        ]
+        self.log_templates = [
+            msg for msg, count in Counter(dict(valid_templates)).most_common(100)
+        ]
+
+        # 清理临时数据
+        self.global_log_messages.clear()
+
+        print(f"Global mappings built:")
+        print(f"  Services: {len(self.service2node_id)}")
+        print(f"  Metrics: {len(self.metric_names)}")
+        print(f"  Log templates: {len(self.log_templates)}")
+
+        self.drain.save_cache()
+
+    def process_single_case(self, data_pack_path: Path) -> Dict:
+        """处理单个case，返回chunks数据而不是直接保存"""
+        print(f"Processing single case: {data_pack_path}")
+
+        data_files = self.derive_filename(data_pack_path)
+        intervals = self.get_time_intervals(data_files)
+
+        if len(intervals) == 0:
+            print("No valid time intervals found, skipping...")
+            return {}
+
+        logs_data = self.process_logs(data_files, intervals)
+        metrics_data = self.process_metrics(data_files, intervals)
+        traces_data = self.process_traces(data_files, intervals)
+        edges = self.build_service_graph(data_files)
+        labels = self.generate_fault_labels(data_files, intervals)
+
+        # 收集边信息
+        self.all_edges.update(edges)
+
+        chunks = {}
+        for i in range(len(intervals)):
+            chunk_id = f"{data_pack_path.name}_chunk_{i:06d}"
+            chunks[chunk_id] = {
+                "logs": logs_data[i],
+                "metrics": metrics_data[i],
+                "traces": traces_data[i],
+                "culprit": labels[i],
+            }
+
+        print(f"Generated {len(chunks)} chunks from {data_pack_path.name}")
+        return chunks
+
+    def save_dataset_batch(
+        self, all_chunks: Dict, output_dir: Path, train_ratio: float = 0.7
+    ) -> None:
+        """保存整个数据集"""
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        chunk_ids = list(all_chunks.keys())
+        np.random.shuffle(chunk_ids)
+
+        split_idx = int(len(chunk_ids) * train_ratio)
+        train_ids = chunk_ids[:split_idx]
+        test_ids = chunk_ids[split_idx:]
+
+        train_chunks = {cid: all_chunks[cid] for cid in train_ids}
+        test_chunks = {cid: all_chunks[cid] for cid in test_ids}
+
+        print(
+            f"Saving dataset with {len(train_chunks)} train and {len(test_chunks)} test chunks"
+        )
+
+        with open(output_dir / "chunk_train.pkl", "wb") as f:
+            pickle.dump(train_chunks, f)
+
+        with open(output_dir / "chunk_test.pkl", "wb") as f:
+            pickle.dump(test_chunks, f)
+
+        metadata = {
+            "event_num": len(self.log_templates) + 1,
+            "metric_num": len(self.metric_names),
+            "node_num": len(self.service2node_id),
+            "chunk_length": self.chunk_length,
+            "service2node_id": self.service2node_id,
+            "node_id2service": self.node_id2service,
+            "log_templates": self.log_templates,
+            "metric_names": self.metric_names,
+            "edges": list(self.all_edges),
+        }
+
+        with open(output_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2, default=str)
+
+        print(f"Dataset saved to: {output_dir}")
+        print(f"Final dataset statistics:")
+        print(f"  Total chunks: {len(all_chunks)}")
+        print(f"  Train chunks: {len(train_chunks)}")
+        print(f"  Test chunks: {len(test_chunks)}")
+        print(f"  Services: {len(self.service2node_id)}")
+        print(f"  Metrics: {len(self.metric_names)}")
+        print(f"  Log templates: {len(self.log_templates)}")
+        print(f"  Edges: {len(self.all_edges)}")
+
+
+def create_dataset_streaming(
+    data_root: str,
+    cases_file: str,
+    output_dir: str,
+    max_cases: int = None,
+    batch_size: int = 2,
+    chunk_length: int = 10,
+    train_ratio: float = 0.7,
+):
+    """
+    流式创建数据集的主函数
+
+    Args:
+        data_root: 数据根目录
+        cases_file: cases索引文件路径
+        output_dir: 输出目录
+        max_cases: 最大处理的cases数量，None表示处理所有
+        batch_size: 批处理大小
+        chunk_length: chunk长度
+        train_ratio: 训练集比例
+    """
+    data_root = Path(data_root)
+    output_root = Path(output_dir)
+
+    cases = pd.read_parquet(cases_file)
+    if max_cases:
+        cases_list = cases["datapack"].head(max_cases).tolist()
+    else:
+        cases_list = cases["datapack"].tolist()
+
+    print(f"Creating dataset from {len(cases_list)} cases...")
+
+    adapter = DataAdapter(chunk_length=chunk_length)
+
+    # Phase 1: 收集元数据
+    print("Phase 1: Collecting global metadata...")
+    for i, data_pack_name in enumerate(tqdm(cases_list, desc="Collecting metadata")):
         data_pack_path = data_root / data_pack_name
-        output_path = output_root / data_pack_name
 
         try:
-            adapter.process_data_pack(data_pack_path, output_path)
+            data_files = adapter.derive_filename(data_pack_path)
+            adapter.collect_global_metadata(data_files)
         except Exception as e:
-            print(f"Error processing {data_pack_name}: {str(e)}")
-            raise e
+            print(f"Error collecting metadata from {data_pack_name}: {str(e)}")
+            continue
 
+    # Phase 2: 构建映射
+    print("Phase 2: Building global mappings...")
+    adapter.build_global_mappings()
 
-if __name__ == "__main__":
-    main()
+    # Phase 3: 流式处理
+    print("Phase 3: Streaming processing...")
+    all_chunks = {}
+
+    for i in range(0, len(cases_list), batch_size):
+        batch_cases = cases_list[i : i + batch_size]
+
+        print(
+            f"Processing batch {i // batch_size + 1}/{(len(cases_list) + batch_size - 1) // batch_size}"
+        )
+
+        for data_pack_name in batch_cases:
+            data_pack_path = data_root / data_pack_name
+
+            try:
+                case_chunks = adapter.process_single_case(data_pack_path)
+                all_chunks.update(case_chunks)
+            except Exception as e:
+                print(f"Error processing {data_pack_name}: {str(e)}")
+                continue
+
+    # Phase 4: 保存数据集
+    print("Phase 4: Saving complete dataset...")
+    adapter.save_dataset_batch(all_chunks, output_root, train_ratio)
+
+    return len(all_chunks)
