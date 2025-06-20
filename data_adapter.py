@@ -134,7 +134,6 @@ class DataAdapter:
         with open(data_files["env"]) as f:
             env_data = json.load(f)
 
-        # 创建UTC时区的时间戳
         start_time = pd.to_datetime(int(env_data["NORMAL_START"]), unit="s", utc=True)
         end_time = pd.to_datetime(int(env_data["ABNORMAL_END"]), unit="s", utc=True)
 
@@ -287,11 +286,12 @@ class DataAdapter:
 
         return result
 
-    def build_service_graph(self, data_files: Dict[str, Path]) -> List[Tuple[int, int]]:
-        """构建服务调用图"""
+    def build_service_graph(self, data_files: Dict[str, Path]):
         edges = []
+        edges_set = set()
 
-        # 从trace数据中提取服务调用关系
+        span_to_service = {}
+
         for file_type in ["normal_trace", "abnormal_trace"]:
             if not data_files[file_type].exists():
                 continue
@@ -299,45 +299,68 @@ class DataAdapter:
             df = pd.read_parquet(data_files[file_type])
 
             for _, row in df.iterrows():
+                span_id = row.get("span_id")
+                service_name = row.get("service_name")
+                if pd.notna(span_id) and pd.notna(service_name):
+                    span_to_service[span_id] = service_name
+
+        for file_type in ["normal_trace", "abnormal_trace"]:
+            if not data_files[file_type].exists():
+                continue
+
+            df = pd.read_parquet(data_files[file_type])
+
+            for _, row in tqdm(df.iterrows(), desc=f"Building graph from {file_type}"):
+                parent_span_id = row.get("parent_span_id")
+                current_service = row.get("service_name")
+
                 if (
-                    pd.notna(row.get("parent_span_id"))
-                    and row.get("service_name") in self.service2node_id
+                    pd.notna(parent_span_id)
+                    and pd.notna(current_service)
+                    and parent_span_id in span_to_service
                 ):
-                    # 这里需要更复杂的逻辑来推断服务间的调用关系
-                    # 简单起见，我们创建一个全连接图
-                    pass
+                    parent_service = span_to_service[parent_span_id]
 
-        node_num = len(self.service2node_id)
-        for i in range(node_num):
-            for j in range(node_num):
-                if i != j:
-                    edges.append((i, j))
+                    if (
+                        parent_service != current_service
+                        and parent_service in self.service2node_id
+                        and current_service in self.service2node_id
+                    ):
+                        parent_node_id = self.service2node_id[parent_service]
+                        current_node_id = self.service2node_id[current_service]
 
+                        edge = (parent_node_id, current_node_id)
+                        if edge not in edges_set:
+                            edges.append(edge)
+                            edges_set.add(edge)
+
+        print(f"Built service graph with {len(edges)} edges")
         return edges
 
     def generate_fault_labels(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> List[int]:
         labels = []
+        with open(data_files["injection"]) as f:
+            injection_data = json.load(f)
 
-        for chunk_idx, (start_time, end_time) in enumerate(intervals):
+        conf = json.loads(injection_data["display_config"])
+        service = conf["injection_point"]["source_service"]
+
+        # Convert injection times to UTC-aware timestamps for comparison
+        injection_start = pd.to_datetime(injection_data["start_time"]).tz_localize(
+            "UTC"
+        )
+        injection_end = pd.to_datetime(injection_data["end_time"]).tz_localize("UTC")
+
+        for start_time, end_time in intervals:
             has_fault = False
 
-            for file_type in ["abnormal_log", "abnormal_metric", "abnormal_trace"]:
-                if not data_files[file_type].exists():
-                    continue
-
-                df = pd.read_parquet(data_files[file_type])
-
-                df["time"] = pd.to_datetime(df["time"]) + pd.Timedelta(hours=8)
-
-                chunk_df = df[(df["time"] >= start_time) & (df["time"] < end_time)]
-                if len(chunk_df) > 0:
-                    has_fault = True
-                    break
+            if injection_start < end_time and injection_end > start_time:
+                has_fault = True
 
             if has_fault:
-                labels.append(np.random.randint(0, len(self.service2node_id)))
+                labels.append(self.service2node_id[service])
             else:
                 labels.append(-1)
 
@@ -359,17 +382,10 @@ class DataAdapter:
             print("No valid time intervals found, skipping...")
             return
 
-        print("Processing logs...")
-        # logs_data = self.process_logs(data_files, intervals)
-
-        print("Processing metrics...")
+        logs_data = self.process_logs(data_files, intervals)
         metrics_data = self.process_metrics(data_files, intervals)
-
-        print("Processing traces...")
         traces_data = self.process_traces(data_files, intervals)
-
         edges = self.build_service_graph(data_files)
-
         labels = self.generate_fault_labels(data_files, intervals)
 
         chunks = {}
@@ -420,14 +436,14 @@ class DataAdapter:
 
 
 def main():
-    data_root = Path("/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered")
+    data_root = Path("sdata")
     output_root = Path("data")
 
-    cases = pd.read_parquet(
-        "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"
-    )
-    top_10 = cases["datapack"].head(10).tolist()
-
+    # cases = pd.read_parquet(
+    #     "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"
+    # )
+    # top_10 = cases["datapack"].head(10).tolist()
+    top_10 = ["ts5-ts-route-service-partition-bbphlf"]
     adapter = DataAdapter(chunk_length=1)
 
     for data_pack_name in top_10:
