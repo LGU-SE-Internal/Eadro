@@ -481,7 +481,7 @@ class DataAdapter:
 
 def main():
     data_root = Path("/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered/")
-    output_root = Path("chunks")  # 修改输出路径以匹配 codes 期望
+    output_root = Path("chunks") 
 
     cases = pd.read_parquet(
         "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"

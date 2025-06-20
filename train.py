@@ -12,9 +12,9 @@ import dgl
 import typer
 from torch.utils.data import Dataset, DataLoader
 
-from codes.utils import *
-from codes.base import BaseModel
-from config import Config, load_config_from_args
+from src.eadro.utils import load_chunks, read_json, dump_params, dump_scores, seed_everything
+from src.eadro.base import BaseModel
+from src.eadro.config import Config, load_config_from_args
 
 
 class ChunkDataset(Dataset):
