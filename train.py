@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-"""
-改进版主运行脚本 - 规范化的Eadro模型训练脚本
-"""
-
 import logging
-import os
 from pathlib import Path
 from typing import List, Optional
 import torch
@@ -20,7 +14,7 @@ from src.eadro.utils import (
     seed_everything,
 )
 from src.eadro.base import BaseModel
-from src.eadro.config import Config, load_config_from_args
+from src.eadro.config import Config
 
 
 class ChunkDataset(Dataset):
@@ -78,9 +72,9 @@ def collate_fn(batch):
     return batched_graph, torch.tensor(labels)
 
 
-def setup_logging(log_file: str = None):
+def setup_logging(log_file: Optional[str] = None):
     """设置日志"""
-    handlers = [logging.StreamHandler()]
+    handlers: List[logging.Handler] = [logging.StreamHandler()]
     if log_file:
         handlers.append(logging.FileHandler(log_file))
 
@@ -92,7 +86,11 @@ def setup_logging(log_file: str = None):
 
 
 def load_data(config: Config) -> tuple:
-    data_dir = Path(config.get("chunks_dir")) / config.get("data")
+    chunks_dir = config.get("chunks_dir")
+    if chunks_dir is None:
+        raise ValueError("chunks_dir is not configured")
+
+    data_dir = Path(chunks_dir)
 
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
@@ -100,6 +98,8 @@ def load_data(config: Config) -> tuple:
     metadata_path = data_dir / "metadata.json"
     if metadata_path.exists():
         metadata = read_json(str(metadata_path))
+        if metadata is None:
+            raise ValueError("Failed to read metadata file")
     else:
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
@@ -141,14 +141,24 @@ def create_data_loaders(
 
 
 def train_model(config: Config, evaluation_epoch: int = 10) -> tuple:
-    seed_everything(config.get("random_seed"))
+    random_seed = config.get("random_seed")
+    if random_seed is None:
+        raise ValueError("random_seed is not configured")
+    seed_everything(random_seed)
 
-    device = get_device(config.get("gpu"))
+    gpu_config = config.get("gpu")
+    if gpu_config is None:
+        raise ValueError("gpu setting is not configured")
+    device = get_device(gpu_config)
 
     train_chunks, test_chunks, edges, metadata = load_data(config)
 
+    node_num = config.get("node_num")
+    if node_num is None:
+        raise ValueError("node_num is not configured")
+
     train_loader, test_loader = create_data_loaders(
-        train_chunks, test_chunks, config.get("node_num"), edges, config
+        train_chunks, test_chunks, node_num, edges, config
     )
 
     model = BaseModel(
@@ -190,9 +200,8 @@ def main(
     graph_hiddens: List[int] = typer.Option([64], help="Graph hidden dimensions"),
     attn_head: int = typer.Option(4, help="Attention heads for GAT"),
     activation: float = typer.Option(0.2, help="LeakyReLU negative slope"),
-    data: str = typer.Option(..., help="Data directory name"),
     result_dir: str = typer.Option("result/", help="Result directory"),
-    chunks_dir: str = typer.Option("chunks/", help="Chunks directory"),
+    chunks_dir: str = typer.Option("dataset_output", help="Chunks directory"),
     config_file: Optional[str] = typer.Option(
         None, "--config", help="Config file path"
     ),
@@ -217,7 +226,6 @@ def main(
         "graph_hiddens": graph_hiddens,
         "attn_head": attn_head,
         "activation": activation,
-        "data": data,
         "result_dir": result_dir,
         "chunks_dir": chunks_dir,
     }
@@ -231,7 +239,10 @@ def main(
         for key, value in config_dict.items():
             config.set(key, value)
 
-    result_dir_path = Path(config.get("result_dir"))
+    result_dir_config = config.get("result_dir")
+    if result_dir_config is None:
+        raise ValueError("result_dir is not configured")
+    result_dir_path = Path(result_dir_config)
     result_dir_path.mkdir(parents=True, exist_ok=True)
 
     hash_id = dump_params(config.to_dict())

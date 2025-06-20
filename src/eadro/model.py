@@ -3,12 +3,8 @@ import numpy as np
 import torch
 from torch import nn
 
-try:
-    from dgl.nn.pytorch.conv import GATv2Conv
-    from dgl.nn import GlobalAttentionPooling
-except ImportError:
-    # Fallback for different DGL versions
-    from dgl.nn import GATv2Conv, GlobalAttentionPooling
+from dgl.nn.pytorch.conv import GATv2Conv
+from dgl.nn.pytorch.glob import GlobalAttentionPooling
 
 
 class GraphModel(nn.Module):
