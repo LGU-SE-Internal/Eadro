@@ -10,6 +10,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pyarrow",
+    "rich>=13.0.0",
     "ruff",
     "scikit-learn",
     "torch==2.4.0",

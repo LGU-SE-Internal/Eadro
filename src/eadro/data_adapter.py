@@ -11,6 +11,9 @@ from drain3.file_persistence import FilePersistence
 from drain3.template_miner_config import TemplateMinerConfig
 from .utils import CacheManager
 import logging
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
 
 
 class DrainProcesser:
@@ -482,6 +485,37 @@ class DataAdapter:
         print(f"  Edges: {len(edges)}")
         print(f"  Chunk length: {self.chunk_length}")
 
+    def collect_global_metadata_parallel(self, data_packs: List[Path], n_workers: int = None) -> None:
+        """
+        并行收集全局元数据
+        
+        Args:
+            data_packs: 数据包路径列表
+            n_workers: 工作进程数，None表示使用CPU核心数
+        """
+        if n_workers is None:
+            n_workers = min(mp.cpu_count(), len(data_packs))
+        
+        print(f"Collecting metadata from {len(data_packs)} cases using {n_workers} workers...")
+        
+        # 并行收集元数据
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(collect_metadata_worker, data_pack) for data_pack in data_packs]
+            
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Collecting metadata"):
+                try:
+                    metadata = future.result()
+                    self.global_services.update(metadata['services'])
+                    self.global_metrics.update(metadata['metrics'])
+                    self.global_log_messages.extend(metadata['log_messages'])
+                except Exception as e:
+                    print(f"Error processing metadata result: {str(e)}")
+        
+        print(f"Collected metadata from {len(data_packs)} cases")
+        print(f"  Total services: {len(self.global_services)}")
+        print(f"  Total metrics: {len(self.global_metrics)}")
+        print(f"  Total log messages: {len(self.global_log_messages)}")
+
     def collect_global_metadata(self, data_files: Dict[str, Path]) -> None:
         """收集单个case的元数据，但不立即构建映射"""
         # 收集服务
@@ -566,6 +600,49 @@ class DataAdapter:
         print(f"  Log templates: {len(self.log_templates)}")
 
         self.drain.save_cache()
+
+    def process_cases_parallel(self, data_packs: List[Path], n_workers: int = None) -> Dict:
+        """
+        并行处理多个cases
+        
+        Args:
+            data_packs: 数据包路径列表
+            n_workers: 工作进程数，None表示使用CPU核心数
+        Returns:
+            dict: 所有chunks的合并结果
+        """
+        if n_workers is None:
+            n_workers = min(mp.cpu_count(), len(data_packs))
+        
+        print(f"Processing {len(data_packs)} cases using {n_workers} workers...")
+        
+        # 准备工作参数
+        drain_config = {
+            'service2node_id': self.service2node_id,
+            'node_id2service': self.node_id2service,
+            'log_templates': self.log_templates,
+            'metric_names': self.metric_names
+        }
+        
+        work_args = [(data_pack, self.chunk_length, drain_config) for data_pack in data_packs]
+        
+        all_chunks = {}
+        
+        # 并行处理
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(process_single_case_worker, args) for args in work_args]
+            
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing cases"):
+                try:
+                    case_name, chunks, edges = future.result()
+                    all_chunks.update(chunks)
+                    self.all_edges.update(edges)
+                    print(f"Processed {case_name}: {len(chunks)} chunks")
+                except Exception as e:
+                    print(f"Error processing case result: {str(e)}")
+        
+        print(f"Parallel processing completed. Total chunks: {len(all_chunks)}")
+        return all_chunks
 
     def process_single_case(self, data_pack_path: Path) -> Dict:
         """处理单个case，返回chunks数据而不是直接保存"""
@@ -660,18 +737,22 @@ def create_dataset_streaming(
     batch_size: int = 2,
     chunk_length: int = 10,
     train_ratio: float = 0.7,
+    n_workers: int = None,
+    use_parallel: bool = True,
 ):
     """
-    流式创建数据集的主函数
+    流式创建数据集的主函数，支持并行处理
 
     Args:
         data_root: 数据根目录
         cases_file: cases索引文件路径
         output_dir: 输出目录
         max_cases: 最大处理的cases数量，None表示处理所有
-        batch_size: 批处理大小
+        batch_size: 批处理大小（仅在非并行模式下使用）
         chunk_length: chunk长度
         train_ratio: 训练集比例
+        n_workers: 工作进程数，None表示使用CPU核心数
+        use_parallel: 是否使用并行处理
     """
     data_root = Path(data_root)
     output_root = Path(output_dir)
@@ -683,48 +764,168 @@ def create_dataset_streaming(
         cases_list = cases["datapack"].tolist()
 
     print(f"Creating dataset from {len(cases_list)} cases...")
+    print(f"Parallel processing: {'Enabled' if use_parallel else 'Disabled'}")
+    
+    if n_workers is None:
+        n_workers = min(mp.cpu_count(), len(cases_list))
+    print(f"Using {n_workers} workers")
 
     adapter = DataAdapter(chunk_length=chunk_length)
+    data_packs = [data_root / name for name in cases_list]
 
-    # Phase 1: 收集元数据
-    print("Phase 1: Collecting global metadata...")
-    for i, data_pack_name in enumerate(tqdm(cases_list, desc="Collecting metadata")):
-        data_pack_path = data_root / data_pack_name
+    if use_parallel:
+        # 并行模式
+        # Phase 1: 并行收集元数据
+        print("Phase 1: Collecting global metadata in parallel...")
+        adapter.collect_global_metadata_parallel(data_packs, n_workers)
 
-        try:
-            data_files = adapter.derive_filename(data_pack_path)
-            adapter.collect_global_metadata(data_files)
-        except Exception as e:
-            print(f"Error collecting metadata from {data_pack_name}: {str(e)}")
-            continue
+        # Phase 2: 构建映射
+        print("Phase 2: Building global mappings...")
+        adapter.build_global_mappings()
 
-    # Phase 2: 构建映射
-    print("Phase 2: Building global mappings...")
-    adapter.build_global_mappings()
+        # Phase 3: 并行处理所有cases
+        print("Phase 3: Parallel processing all cases...")
+        all_chunks = adapter.process_cases_parallel(data_packs, n_workers)
 
-    # Phase 3: 流式处理
-    print("Phase 3: Streaming processing...")
-    all_chunks = {}
-
-    for i in range(0, len(cases_list), batch_size):
-        batch_cases = cases_list[i : i + batch_size]
-
-        print(
-            f"Processing batch {i // batch_size + 1}/{(len(cases_list) + batch_size - 1) // batch_size}"
-        )
-
-        for data_pack_name in batch_cases:
+    else:
+        # 原有的串行批处理模式
+        print("Using sequential batch processing...")
+        
+        # Phase 1: 收集元数据
+        print("Phase 1: Collecting global metadata...")
+        for i, data_pack_name in enumerate(tqdm(cases_list, desc="Collecting metadata")):
             data_pack_path = data_root / data_pack_name
 
             try:
-                case_chunks = adapter.process_single_case(data_pack_path)
-                all_chunks.update(case_chunks)
+                data_files = adapter.derive_filename(data_pack_path)
+                adapter.collect_global_metadata(data_files)
             except Exception as e:
-                print(f"Error processing {data_pack_name}: {str(e)}")
+                print(f"Error collecting metadata from {data_pack_name}: {str(e)}")
                 continue
+
+        # Phase 2: 构建映射
+        print("Phase 2: Building global mappings...")
+        adapter.build_global_mappings()
+
+        # Phase 3: 流式处理
+        print("Phase 3: Streaming processing...")
+        all_chunks = {}
+
+        for i in range(0, len(cases_list), batch_size):
+            batch_cases = cases_list[i : i + batch_size]
+
+            print(
+                f"Processing batch {i // batch_size + 1}/{(len(cases_list) + batch_size - 1) // batch_size}"
+            )
+
+            for data_pack_name in batch_cases:
+                data_pack_path = data_root / data_pack_name
+
+                try:
+                    case_chunks = adapter.process_single_case(data_pack_path)
+                    all_chunks.update(case_chunks)
+                except Exception as e:
+                    print(f"Error processing {data_pack_name}: {str(e)}")
+                    continue
 
     # Phase 4: 保存数据集
     print("Phase 4: Saving complete dataset...")
     adapter.save_dataset_batch(all_chunks, output_root, train_ratio)
 
     return len(all_chunks)
+
+
+def process_single_case_worker(args):
+    """
+    工作进程函数，用于并行处理单个case
+    
+    Args:
+        args: tuple containing (data_pack_path, chunk_length, drain_config)
+    Returns:
+        tuple: (case_name, chunks_data, metadata)
+    """
+    data_pack_path, chunk_length, drain_config = args
+    
+    try:
+        # 创建临时适配器实例
+        adapter = DataAdapter(chunk_length=chunk_length)
+        
+        # 设置全局映射（从传入的配置中）
+        adapter.service2node_id = drain_config['service2node_id']
+        adapter.node_id2service = drain_config['node_id2service']
+        adapter.log_templates = drain_config['log_templates']
+        adapter.metric_names = drain_config['metric_names']
+        
+        # 处理单个case
+        chunks = adapter.process_single_case(data_pack_path)
+        
+        # 收集该case的边信息
+        data_files = adapter.derive_filename(data_pack_path)
+        edges = adapter.build_service_graph(data_files)
+        
+        return data_pack_path.name, chunks, edges
+        
+    except Exception as e:
+        print(f"Error processing {data_pack_path.name} in worker: {str(e)}")
+        return data_pack_path.name, {}, []
+
+
+def collect_metadata_worker(data_pack_path):
+    """
+    工作进程函数，用于并行收集元数据
+    
+    Args:
+        data_pack_path: Path to data pack
+    Returns:
+        dict: metadata including services, metrics, and log messages
+    """
+    try:
+        adapter = DataAdapter()
+        data_files = adapter.derive_filename(data_pack_path)
+        
+        # 收集服务
+        services = set()
+        for file_type in [
+            "normal_log", "abnormal_log", "normal_metric", "abnormal_metric",
+            "normal_trace", "abnormal_trace"
+        ]:
+            if data_files[file_type].exists():
+                df = pd.read_parquet(data_files[file_type])
+                if "service_name" in df.columns:
+                    services.update(
+                        df[df["service_name"].notna()]["service_name"].unique()
+                    )
+        
+        # 收集指标
+        metrics = set()
+        for file_type in ["normal_metric", "abnormal_metric"]:
+            if data_files[file_type].exists():
+                df = pd.read_parquet(data_files[file_type])
+                if "metric" in df.columns:
+                    metrics.update(df["metric"].unique())
+        
+        # 收集日志消息样本
+        log_messages = []
+        for file_type in ["normal_log", "abnormal_log"]:
+            if data_files[file_type].exists():
+                df = pd.read_parquet(data_files[file_type])
+                if "message" in df.columns:
+                    messages = df["message"].astype(str).tolist()
+                    valid_messages = [msg for msg in messages if msg.strip()]
+                    log_messages.extend(valid_messages[:500])  # 限制每个文件的消息数量
+        
+        return {
+            'case_name': data_pack_path.name,
+            'services': services,
+            'metrics': metrics,
+            'log_messages': log_messages
+        }
+        
+    except Exception as e:
+        print(f"Error collecting metadata from {data_pack_path.name}: {str(e)}")
+        return {
+            'case_name': data_pack_path.name,
+            'services': set(),
+            'metrics': set(),
+            'log_messages': []
+        }
