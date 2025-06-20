@@ -2,6 +2,11 @@ import os
 import logging
 import pickle
 import json
+import hashlib
+import random
+import numpy as np
+import torch
+from datetime import datetime, timedelta
 
 
 def load_chunks(data_dir):
@@ -19,7 +24,7 @@ def read_json(filepath):
         with open(filepath, "r") as f:
             return json.loads(f.read())
     else:
-        logging.raiseExceptions("File path " + filepath + " not exists!")
+        logging.error("File path " + filepath + " not exists!")
         return
 
 
@@ -55,9 +60,6 @@ def dump_scores(result_dir, hash_id, scores, converge):
         fw.write("{}{}".format("=" * 40, "\n"))
 
 
-import hashlib
-
-
 def dump_params(params):
     hash_id = hashlib.md5(
         str(sorted([(k, v) for k, v in params.items()])).encode("utf-8")
@@ -77,11 +79,6 @@ def dump_params(params):
         handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
     )
     return hash_id
-
-
-import random
-import numpy as np
-import torch
 
 
 def seed_everything(seed=42):

@@ -107,14 +107,30 @@ class DataAdapter:
             if data_files[file_type].exists():
                 df = pd.read_parquet(data_files[file_type])
                 if "message" in df.columns:
-                    all_messages.extend(
-                        [self.drain(i) for i in df["message"].astype(str).tolist()]
-                    )
+                    messages = df["message"].astype(str).tolist()
+                    print(f"Processing {len(messages)} messages from {file_type}")
+                    processed_messages = [
+                        self.drain(msg) for msg in messages if msg.strip()
+                    ]
+                    all_messages.extend(processed_messages)
+                else:
+                    print(f"Warning: 'message' column not found in {file_type}")
+            else:
+                print(f"Warning: {file_type} file does not exist")
 
         message_counts = Counter(all_messages)
-        self.log_templates = [msg for msg, count in message_counts.most_common(100)]
+        valid_templates = [
+            (msg, count) for msg, count in message_counts.items() if msg.strip()
+        ]
+        self.log_templates = [
+            msg for msg, count in Counter(dict(valid_templates)).most_common(100)
+        ]
 
         print(f"Extracted {len(self.log_templates)} log templates")
+        if len(self.log_templates) == 0:
+            print("Warning: No log templates extracted!")
+
+        self.drain.save_cache()
 
     def extract_metric_names(self, data_files: Dict[str, Path]) -> None:
         all_metrics = set()
@@ -183,7 +199,9 @@ class DataAdapter:
                     node_id = self.service2node_id[service_name]
 
                     for message in service_group["message"]:
-                        template_id = template2id.get(str(message), 0)
+                        # 使用 drain 处理后的模板进行匹配
+                        template = self.drain(str(message))
+                        template_id = template2id.get(template, 0)
                         result[chunk_idx, node_id, template_id] += 1
 
         return result
@@ -225,12 +243,15 @@ class DataAdapter:
                     group_sorted = group.sort_values("time")
                     values = group_sorted["value"].values
 
+                    # 确保数据长度匹配 chunk_length
                     if len(values) > self.chunk_length:
+                        # 如果数据点太多，进行均匀采样
                         indices = np.linspace(
                             0, len(values) - 1, self.chunk_length, dtype=int
                         )
                         values = values[indices]
                     elif len(values) < self.chunk_length:
+                        # 如果数据点不足，进行零填充
                         padded_values = np.zeros(self.chunk_length)
                         padded_values[: len(values)] = values
                         values = padded_values
@@ -272,12 +293,15 @@ class DataAdapter:
                     service_group_sorted = service_group.sort_values("time")
                     durations = service_group_sorted["duration"].values
 
+                    # 确保数据长度匹配 chunk_length
                     if len(durations) > self.chunk_length:
+                        # 如果数据点太多，进行均匀采样
                         indices = np.linspace(
                             0, len(durations) - 1, self.chunk_length, dtype=int
                         )
                         durations = durations[indices]
                     elif len(durations) < self.chunk_length:
+                        # 如果数据点不足，进行零填充
                         padded_durations = np.zeros(self.chunk_length)
                         padded_durations[: len(durations)] = durations
                         durations = padded_durations
@@ -347,7 +371,6 @@ class DataAdapter:
         conf = json.loads(injection_data["display_config"])
         service = conf["injection_point"]["source_service"]
 
-        # Convert injection times to UTC-aware timestamps for comparison
         injection_start = pd.to_datetime(injection_data["start_time"]).tz_localize(
             "UTC"
         )
@@ -434,10 +457,26 @@ class DataAdapter:
         print(f"Data processing completed. Output saved to: {output_dir}")
         print(f"Train chunks: {len(train_chunks)}, Test chunks: {len(test_chunks)}")
 
+        # 验证数据维度
+        if train_chunks:
+            sample_chunk = next(iter(train_chunks.values()))
+            print("Sample chunk data shapes:")
+            print(f"  Logs: {sample_chunk['logs'].shape}")
+            print(f"  Metrics: {sample_chunk['metrics'].shape}")
+            print(f"  Traces: {sample_chunk['traces'].shape}")
+            print(f"  Culprit: {sample_chunk['culprit']}")
+
+        print("Metadata summary:")
+        print(f"  Event num: {len(self.log_templates) + 1}")
+        print(f"  Metric num: {len(self.metric_names)}")
+        print(f"  Node num: {len(self.service2node_id)}")
+        print(f"  Edges: {len(edges)}")
+        print(f"  Chunk length: {self.chunk_length}")
+
 
 def main():
     data_root = Path("sdata")
-    output_root = Path("data")
+    output_root = Path("chunks")  # 修改输出路径以匹配 codes 期望
 
     # cases = pd.read_parquet(
     #     "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"

@@ -61,10 +61,10 @@ def deal_logs(intervals, info, idx, name):
 z_zero_scaler = lambda x: (x - np.mean(x)) / (np.std(x) + 1e-8)
 
 
-def deal_metrics(intervals, info, idx, name, chunk_lenth):
+def deal_metrics(intervals, info, idx, name, chunk_length):
     print("*** Dealing with metrics...")
     metric_num = len(info.metric_names)
-    metrics = np.zeros((len(intervals), info.node_num, chunk_lenth, metric_num))
+    metrics = np.zeros((len(intervals), info.node_num, chunk_length, metric_num))
 
     for nid, service in enumerate(info.service_names):
         df = pd.read_csv(
@@ -74,7 +74,7 @@ def deal_metrics(intervals, info, idx, name, chunk_lenth):
         df.set_index(["timestamp"], inplace=True)
         for chunk_idx, (s, e) in enumerate(intervals):
             values = df.loc[s:e, :].to_numpy()
-            assert values.shape == (chunk_lenth, metric_num), (
+            assert values.shape == (chunk_length, metric_num), (
                 "{} shape in {}--{}".format(values.shape, s, e)
             )
             metrics[chunk_idx, nid, :, :] = values
@@ -84,7 +84,7 @@ def deal_metrics(intervals, info, idx, name, chunk_lenth):
     return metrics
 
 
-def deal_traces(intervals, info, idx, name, chunk_lenth):
+def deal_traces(intervals, info, idx, name, chunk_length):
     """
     Input:
         intervals=[(s,e)], the chunks covers the period of [s, e].
@@ -92,14 +92,14 @@ def deal_traces(intervals, info, idx, name, chunk_lenth):
         a dict containing info for each interval:
         -- cell of invok list : a dict contains invocations inside the given time period == as invocation-based edge-level features
             {s-t:[lat1, lat2, ...]}
-        -- cell of latency list: a dict contains a np.array [chunk_lenth] denoting the average latency (per time slot) for each node
+        -- cell of latency list: a dict contains a np.array [chunk_length] denoting the average latency (per time slot) for each node
                                 === as trace-based node-level features
-            {nid:np.array([lat_1, ..., lat_tau, ..., lat_chunk_lenth}])}
+            {nid:np.array([lat_1, ..., lat_tau, ..., lat_chunk_length}])}
     """
     print("*** Dealing with traces...")
     traces = read_json(os.path.join("./parsed_data", name, "traces" + idx + ".json"))
     invocations = []  # the number of invocations
-    latency = np.zeros((len(intervals), info.node_num, chunk_lenth, 2))
+    latency = np.zeros((len(intervals), info.node_num, chunk_length, 2))
 
     for chunk_idx, (s, e) in enumerate(intervals):
         invok = {}

@@ -143,7 +143,7 @@ class TraceModel(nn.Module):
         trace_hiddens=[20, 50],
         trace_kernel_sizes=[3, 3],
         self_attn=False,
-        chunk_lenth=None,
+        chunk_length=None,
         **kwargs,
     ):
         super(TraceModel, self).__init__()
@@ -159,8 +159,8 @@ class TraceModel(nn.Module):
 
         self.self_attn = self_attn
         if self_attn:
-            assert chunk_lenth is not None
-            self.attn_layer = SelfAttention(self.out_dim, chunk_lenth)
+            assert chunk_length is not None
+            self.attn_layer = SelfAttention(self.out_dim, chunk_length)
 
     def forward(self, x: torch.Tensor):  # [bz, T, 1]
         hidden_states = self.net(x)
@@ -177,7 +177,7 @@ class MetricModel(nn.Module):
         metric_hiddens=[64, 128],
         metric_kernel_sizes=[3, 3],
         self_attn=False,
-        chunk_lenth=None,
+        chunk_length=None,
         **kwargs,
     ):
         super(MetricModel, self).__init__()
@@ -195,8 +195,8 @@ class MetricModel(nn.Module):
 
         self.self_attn = self_attn
         if self_attn:
-            assert chunk_lenth is not None
-            self.attn_layer = SelfAttention(self.out_dim, chunk_lenth)
+            assert chunk_length is not None
+            self.attn_layer = SelfAttention(self.out_dim, chunk_length)
 
     def forward(self, x):  # [bz, T, metric_num]
         assert x.shape[-1] == self.metric_num

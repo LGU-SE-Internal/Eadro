@@ -5,6 +5,8 @@ import copy
 import torch
 from torch import nn
 import logging
+import numpy as np
+from sklearn.metrics import ndcg_score
 
 from model import MainModel
 
@@ -30,7 +32,9 @@ class BaseModel(nn.Module):
         self.patience = patience  # > 0: use early stop
         self.device = device
 
-        self.model_save_dir = os.path.join(result_dir, hash_id)
+        self.model_save_dir = (
+            os.path.join(result_dir, hash_id) if hash_id else result_dir
+        )
         self.model = MainModel(event_num, metric_num, node_num, device, **kwargs)
         self.model.to(device)
 
@@ -59,8 +63,8 @@ class BaseModel(nn.Module):
                             for j in range(5):
                                 hrs[j] += int(rank <= j)
                                 ndcgs[j] += ndcg_score(
-                                    [res["y_prob"][idx]],
-                                    [res["pred_prob"][idx]],
+                                    np.array([res["y_prob"][idx]]).reshape(1, -1),
+                                    np.array([res["pred_prob"][idx]]).reshape(1, -1),
                                     k=j + 1,
                                 )
                 epoch_loss += res["loss"].item()
@@ -142,7 +146,7 @@ class BaseModel(nn.Module):
 
                 self.save_model(best_state)
 
-        if coverage > 5:
+        if coverage and coverage > 5:
             logging.info(
                 "* Best result got at epoch {} with HR@1: {:.4f}".format(
                     coverage, best_hr1
@@ -163,5 +167,5 @@ class BaseModel(nn.Module):
             file = os.path.join(self.model_save_dir, "model.ckpt")
         try:
             torch.save(state, file, _use_new_zipfile_serialization=False)
-        except:
+        except Exception:
             torch.save(state, file)

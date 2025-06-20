@@ -21,7 +21,7 @@ def get_chunkid():
             return chunkid
 
 
-def get_basic(info, idx, name, chunk_lenth=10, threshold=1, **kwargs):
+def get_basic(info, idx, name, chunk_length=10, threshold=1, **kwargs):
     records = read_json(os.path.join("./parsed_data", name, "records" + idx + ".json"))
     faults = [
         (f_record["s"], f_record["e"], info.service2nid[f_record["service"]])
@@ -30,7 +30,9 @@ def get_basic(info, idx, name, chunk_lenth=10, threshold=1, **kwargs):
     start, end = records["start"], records["end"]
 
     ########## Generate annotated intervals ##########
-    intervals = [(s, s + chunk_lenth - 1) for s in range(start, end - chunk_lenth + 1)]
+    intervals = [
+        (s, s + chunk_length - 1) for s in range(start, end - chunk_length + 1)
+    ]
     labels = [-1] * len(intervals)
     for chunk_idx, (s, e) in enumerate(intervals):
         for fs, fe, culprit in faults:
@@ -52,9 +54,9 @@ def get_basic(info, idx, name, chunk_lenth=10, threshold=1, **kwargs):
     return intervals, labels
 
 
-def get_chunks(info, idx, name, chunk_lenth=10, **kwargs):
+def get_chunks(info, idx, name, chunk_length=10, **kwargs):
     intervals, labels = get_basic(
-        info, idx, name=name, chunk_lenth=chunk_lenth, **kwargs
+        info, idx, name=name, chunk_length=chunk_length, **kwargs
     )
 
     aim_dir = os.path.join("../chunks", name, idx)
@@ -64,12 +66,14 @@ def get_chunks(info, idx, name, chunk_lenth=10, **kwargs):
         with open(os.path.join(aim_dir, "traces.pkl"), "rb") as fr:
             traces = pickle.load(fr)
     else:
-        traces = deal_traces(intervals, info, idx, name=name, chunk_lenth=chunk_lenth)
+        traces = deal_traces(intervals, info, idx, name=name, chunk_length=chunk_length)
     if os.path.exists(os.path.join(aim_dir, "metrics.pkl")):
         with open(os.path.join(aim_dir, "metrics.pkl"), "rb") as fr:
             metrics = pickle.load(fr)
     else:
-        metrics = deal_metrics(intervals, info, idx, name=name, chunk_lenth=chunk_lenth)
+        metrics = deal_metrics(
+            intervals, info, idx, name=name, chunk_length=chunk_length
+        )
     if os.path.exists(os.path.join(aim_dir, "logs.pkl")):
         with open(os.path.join(aim_dir, "logs.pkl"), "rb") as fr:
             logs = pickle.load(fr)
@@ -82,7 +86,7 @@ def get_chunks(info, idx, name, chunk_lenth=10, **kwargs):
         chunk_id = get_chunkid()
         chunks[chunk_id]["traces"] = traces["latency"][
             idx
-        ]  # [node_num, chunk_lenth, 2]
+        ]  # [node_num, chunk_length, 2]
         chunks[chunk_id]["metrics"] = metrics[idx]
         chunks[chunk_id]["logs"] = logs[idx]
         chunks[chunk_id]["culprit"] = labels[idx]
@@ -93,7 +97,7 @@ def get_chunks(info, idx, name, chunk_lenth=10, **kwargs):
 import numpy as np
 
 
-def get_all_chunks(name, chunk_lenth=10, **kwargs):
+def get_all_chunks(name, chunk_length=10, **kwargs):
     aim_dir = os.path.join("../chunks", name)
     if not os.path.exists(aim_dir):
         os.mkdir(aim_dir)
@@ -110,7 +114,7 @@ def get_all_chunks(name, chunk_lenth=10, **kwargs):
         ):
             print("\n\n", "^" * 20, "Now dealing with", idx, "^" * 20)
             new_chunks = get_chunks(
-                info, str(idx), chunk_lenth=chunk_lenth, name=name, **kwargs
+                info, str(idx), chunk_length=chunk_length, name=name, **kwargs
             )
             chunks.update(new_chunks)
             idx += 1
@@ -121,7 +125,7 @@ def get_all_chunks(name, chunk_lenth=10, **kwargs):
         pickle.dump(chunks, fw)
 
     ############## Update info for metadata ##############
-    info.add_info("chunk_lenth", chunk_lenth)
+    info.add_info("chunk_length", chunk_length)
     info.add_info("chunk_num", len(chunks))
     info.add_info("edges", info.edges)
     info.add_info("event_num", chunks[list(chunks.keys())[0]]["logs"].shape[-1])
@@ -222,7 +226,7 @@ parser.add_argument(
     help="just remove the final chunks and retain pre-processed data",
 )
 parser.add_argument("--threshold", default=1, type=int)
-parser.add_argument("--chunk_lenth", default=10, type=int)
+parser.add_argument("--chunk_length", default=10, type=int)
 parser.add_argument("--test_ratio", default=0.3, type=float)
 parser.add_argument("--name", required=True, help="The system name")
 params = vars(parser.parse_args())

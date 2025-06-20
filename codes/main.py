@@ -5,7 +5,7 @@ import torch
 import dgl
 from torch.utils.data import Dataset, DataLoader
 
-from utils import *
+from .utils import read_json, load_chunks, dump_params, dump_scores, seed_everything
 from base import BaseModel
 
 
@@ -17,12 +17,19 @@ class ChunkDataset(Dataset):  # [node_num, T, else]
             self.idx2id[idx] = chunk_id
             chunk = chunks[chunk_id]
             try:
-                graph = dgl.graph(edges, num_nodes=node_num)
+                if edges:
+                    # 转换边格式为 DGL 期望的格式
+                    src, dst = zip(*edges)
+                    graph = dgl.graph((src, dst), num_nodes=node_num)
+                else:
+                    graph = dgl.graph(([], []), num_nodes=node_num)
             except Exception:
                 # Fallback for different DGL versions
                 graph = dgl.DGLGraph()
                 graph.add_nodes(node_num)
-                graph.add_edges(edges[0], edges[1])
+                if edges:
+                    src, dst = zip(*edges)
+                    graph.add_edges(src, dst)
             graph.ndata["logs"] = torch.FloatTensor(chunk["logs"])
             graph.ndata["metrics"] = torch.FloatTensor(chunk["metrics"])
             graph.ndata["traces"] = torch.FloatTensor(chunk["traces"])
@@ -91,13 +98,25 @@ def collate(data):
 def run(evaluation_epoch=10):
     data_dir = os.path.join("../chunks", params["data"])
 
+    # 检查数据目录是否存在
+    if not os.path.exists(data_dir):
+        logging.error(f"Data directory not found: {data_dir}")
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+
     metadata = read_json(os.path.join(data_dir, "metadata.json"))
+    if metadata is None:
+        logging.error("Failed to load metadata.json")
+        raise FileNotFoundError("metadata.json not found or invalid")
+
     event_num, node_num, metric_num = (
         metadata["event_num"],
         metadata["node_num"],
         metadata["metric_num"],
     )
-    params["chunk_lenth"] = metadata["chunk_lenth"]
+    params["chunk_length"] = metadata["chunk_length"]
+
+    # 获取边信息
+    edges = metadata.get("edges", [])
 
     hash_id = dump_params(params)
     params["hash_id"] = hash_id
@@ -106,8 +125,8 @@ def run(evaluation_epoch=10):
 
     train_chunks, test_chunks = load_chunks(data_dir)
 
-    train_data = ChunkDataset(train_chunks, node_num, edges=[])
-    test_data = ChunkDataset(test_chunks, node_num, edges=[])
+    train_data = ChunkDataset(train_chunks, node_num, edges=edges)
+    test_data = ChunkDataset(test_chunks, node_num, edges=edges)
 
     train_dl = DataLoader(
         train_data,
