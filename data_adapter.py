@@ -369,7 +369,10 @@ class DataAdapter:
             injection_data = json.load(f)
 
         conf = json.loads(injection_data["display_config"])
-        service = conf["injection_point"]["source_service"]
+        service = conf["injection_point"].get("source_service", "")
+        if service == "":
+            service = conf["injection_point"].get("app_name", "")
+        assert service != ""
 
         injection_start = pd.to_datetime(injection_data["start_time"]).tz_localize(
             "UTC"
@@ -475,14 +478,14 @@ class DataAdapter:
 
 
 def main():
-    data_root = Path("sdata")
+    data_root = Path("/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered/")
     output_root = Path("chunks")  # 修改输出路径以匹配 codes 期望
 
-    # cases = pd.read_parquet(
-    #     "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"
-    # )
-    # top_10 = cases["datapack"].head(10).tolist()
-    top_10 = ["ts5-ts-route-service-partition-bbphlf"]
+    cases = pd.read_parquet(
+         "/mnt/jfs/rcabench-platform-v2/meta/rcabench_filtered/index.parquet"
+     )
+    top_10 = cases["datapack"].head(10).tolist()
+    # top_10 = ["ts5-ts-route-service-partition-bbphlf"]
     adapter = DataAdapter(chunk_length=1)
 
     for data_pack_name in top_10:
