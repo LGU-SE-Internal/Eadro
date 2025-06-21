@@ -4,7 +4,7 @@ from typing import Dict, Any
 
 
 class Config:
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = ""):
         self.default_config = {
             "random_seed": 42,
             "gpu": True,

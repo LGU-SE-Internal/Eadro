@@ -12,6 +12,11 @@ from pathlib import Path
 import threading
 import pickle
 import logging
+from functools import wraps
+from pprint import pformat
+import datetime
+import inspect
+import sys
 
 T = TypeVar("T")
 
@@ -47,15 +52,14 @@ def json_pretty_dump(obj, filename):
         )
 
 
-from datetime import datetime, timedelta
-
-
 def dump_scores(result_dir, hash_id, scores, converge):
     with open(os.path.join(result_dir, "experiments.txt"), "a+") as fw:
         fw.write(
             hash_id
             + ": "
-            + (datetime.now() + timedelta(hours=8)).strftime("%Y/%m/%d-%H:%M:%S")
+            + (datetime.datetime.now() + timedelta(hours=8)).strftime(
+                "%Y/%m/%d-%H:%M:%S"
+            )
             + "\n"
         )
         fw.write(
@@ -160,3 +164,29 @@ class CacheManager(Generic[T]):
         new_value = compute_fn()
         self.set(key, new_value)
         return new_value
+
+
+def timeit(*, log_level: str = "DEBUG", log_args: bool | set[str] = True):
+    def decorator(func):
+        sig = inspect.signature(func)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            func_name = f"{func.__qualname__:<20}"
+
+            sys.stdout.flush()
+
+            start = datetime.datetime.now()
+            result = func(*args, **kwargs)
+            end = datetime.datetime.now()
+
+            duration = end - start
+            duration_message = f"duration={duration.total_seconds():.6f}s"
+            print(f"exit  {func_name} {duration_message}")
+            sys.stdout.flush()
+
+            return result
+
+        return wrapper
+
+    return decorator

@@ -19,7 +19,7 @@ class BaseModel(nn.Module):
         node_num,
         device,
         lr=1e-3,
-        epoches=50,
+        epochs=50,
         patience=5,
         result_dir="./",
         hash_id=None,
@@ -27,7 +27,7 @@ class BaseModel(nn.Module):
     ):
         super(BaseModel, self).__init__()
 
-        self.epoches = epoches
+        self.epochs = epochs
         self.lr = lr
         self.patience = patience  # > 0: use early stop
         self.device = device
@@ -96,10 +96,10 @@ class BaseModel(nn.Module):
         best_hr1, coverage, best_state, eval_res = -1, None, None, None  # evaluation
         pre_loss, worse_count = float("inf"), 0  # early break
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.adam.Adam(self.model.parameters(), lr=self.lr)
         # optimizer = torch.optim.SGD(self.model.parameters(), lr=self.lr, momentum=0.99)
 
-        for epoch in range(1, self.epoches + 1):
+        for epoch in range(1, self.epochs + 1):
             self.model.train()
             batch_cnt, epoch_loss = 0, 0.0
             epoch_time_start = time.time()
@@ -119,7 +119,7 @@ class BaseModel(nn.Module):
             epoch_loss = epoch_loss / batch_cnt
             logging.info(
                 "Epoch {}/{}, training loss: {:.5f} [{:.2f}s]".format(
-                    epoch, self.epoches, epoch_loss, epoch_time_elapsed
+                    epoch, self.epochs, epoch_loss, epoch_time_elapsed
                 )
             )
 

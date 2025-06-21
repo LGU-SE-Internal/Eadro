@@ -18,8 +18,6 @@ from src.eadro.config import Config
 
 
 class ChunkDataset(Dataset):
-    """改进的数据集类"""
-
     def __init__(self, chunks: dict, node_num: int, edges: list):
         self.data = []
         self.idx2id = {}
@@ -28,17 +26,14 @@ class ChunkDataset(Dataset):
             self.idx2id[idx] = chunk_id
             chunk = chunks[chunk_id]
 
-            # 创建图
             try:
                 graph = dgl.graph(edges, num_nodes=node_num)
             except Exception:
-                # Fallback for different DGL versions
                 graph = dgl.DGLGraph()
                 graph.add_nodes(node_num)
                 if edges:
                     graph.add_edges(edges[0], edges[1])
 
-            # 添加节点数据
             graph.ndata["logs"] = torch.FloatTensor(chunk["logs"])
             graph.ndata["metrics"] = torch.FloatTensor(chunk["metrics"])
             graph.ndata["traces"] = torch.FloatTensor(chunk["traces"])
@@ -52,12 +47,10 @@ class ChunkDataset(Dataset):
         return self.data[idx]
 
     def get_chunk_id(self, idx: int) -> str:
-        """获取chunk ID"""
         return self.idx2id[idx]
 
 
 def get_device(use_gpu: bool) -> torch.device:
-    """获取计算设备"""
     if use_gpu and torch.cuda.is_available():
         logging.info("Using GPU...")
         return torch.device("cuda")
@@ -66,14 +59,12 @@ def get_device(use_gpu: bool) -> torch.device:
 
 
 def collate_fn(batch):
-    """数据批处理函数"""
     graphs, labels = map(list, zip(*batch))
     batched_graph = dgl.batch(graphs)
     return batched_graph, torch.tensor(labels)
 
 
 def setup_logging(log_file: Optional[str] = None):
-    """设置日志"""
     handlers: List[logging.Handler] = [logging.StreamHandler()]
     if log_file:
         handlers.append(logging.FileHandler(log_file))
@@ -178,20 +169,17 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    # 训练参数
     random_seed: int = typer.Option(42, help="Random seed"),
     gpu: bool = typer.Option(True, help="Use GPU"),
-    epochs: int = typer.Option(50, help="Training epochs"),
+    epochs: int = typer.Option(500, help="Training epochs"),
     batch_size: int = typer.Option(256, help="Batch size"),
     lr: float = typer.Option(0.001, help="Learning rate"),
     patience: int = typer.Option(10, help="Early stopping patience"),
-    # 融合参数
     self_attn: bool = typer.Option(True, help="Use self attention"),
     fuse_dim: int = typer.Option(128, help="Fusion dimension"),
     alpha: float = typer.Option(0.5, help="Loss combination weight"),
     locate_hiddens: List[int] = typer.Option([64], help="Localization hidden dims"),
     detect_hiddens: List[int] = typer.Option([64], help="Detection hidden dims"),
-    # 源模型参数
     log_dim: int = typer.Option(16, help="Log embedding dimension"),
     trace_kernel_sizes: List[int] = typer.Option([2], help="Trace conv kernel sizes"),
     trace_hiddens: List[int] = typer.Option([64], help="Trace hidden dimensions"),

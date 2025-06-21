@@ -4,11 +4,12 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich import print as rprint
-
-from src.eadro.data_adapter import create_dataset_streaming
+from src.eadro.data_adapter import create_dataset
 from src.eadro.progress_manager import ProgressManager
 
-app = typer.Typer(help="Create dataset with parallel processing for EADRO")
+app = typer.Typer(
+    help="Create and manage datasets with incremental processing for EADRO"
+)
 console = Console()
 
 
@@ -35,12 +36,6 @@ def main(
     n_workers: Optional[int] = typer.Option(
         None, "--workers", "-w", help="Number of worker processes (default: CPU count)"
     ),
-    no_parallel: bool = typer.Option(
-        False, "--no-parallel", help="Disable parallel processing"
-    ),
-    batch_size: int = typer.Option(
-        2, "--batch-size", help="Batch size for sequential processing"
-    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose output"
     ),
@@ -53,7 +48,6 @@ def main(
         rprint(f"[red]Error: Cases file '{cases_file}' does not exist[/red]")
         raise typer.Exit(1)
 
-    # Display configuration
     console.print("\n[bold blue]Dataset Creation Configuration[/bold blue]")
     console.print(f"  [cyan]Data root:[/cyan] {data_root}")
     console.print(f"  [cyan]Cases file:[/cyan] {cases_file}")
@@ -62,10 +56,6 @@ def main(
     console.print(f"  [cyan]Chunk length:[/cyan] {chunk_length}")
     console.print(f"  [cyan]Train ratio:[/cyan] {train_ratio}")
     console.print(f"  [cyan]Workers:[/cyan] {n_workers or 'Auto'}")
-    console.print(
-        f"  [cyan]Parallel processing:[/cyan] {'Disabled' if no_parallel else 'Enabled'}"
-    )
-    console.print(f"  [cyan]Batch size:[/cyan] {batch_size}")
     console.print()
 
     if not typer.confirm("Continue with dataset creation?"):
@@ -73,39 +63,29 @@ def main(
         raise typer.Exit(0)
 
     try:
-        # 创建进度管理器
         progress_manager = ProgressManager(console)
-
-        # 显示初始配置信息
         console.print(
             "\n[bold blue]Starting dataset creation with Docker-style progress display...[/bold blue]"
         )
-
-        # 启动进度管理器
         progress_manager.start()
 
         try:
-            total_chunks = create_dataset_streaming(
+            total_chunks = create_dataset(
                 data_root=data_root,
                 cases_file=cases_file,
                 output_dir=output_dir,
                 max_cases=max_cases,
-                batch_size=batch_size,
                 chunk_length=chunk_length,
                 train_ratio=train_ratio,
                 n_workers=n_workers,
-                use_parallel=not no_parallel,
                 progress_manager=progress_manager,
             )
 
-            # 等待所有任务完成
             progress_manager.wait_for_completion(timeout=10.0)
 
         finally:
-            # 停止进度管理器
             progress_manager.stop()
 
-        # 显示完成统计
         summary = progress_manager.get_summary()
         console.print(
             "\n[bold green]✓ Dataset creation completed successfully![/bold green]"
