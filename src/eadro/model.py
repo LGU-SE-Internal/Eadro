@@ -1,4 +1,5 @@
 import math
+from typing import List, Dict, Any, Optional
 import numpy as np
 import torch
 from torch import nn
@@ -10,17 +11,23 @@ from dgl.nn.pytorch.glob import GlobalAttentionPooling
 class GraphModel(nn.Module):
     def __init__(
         self,
-        in_dim,
-        graph_hiddens=[64, 128],
-        device="cpu",
-        attn_head=4,
-        activation=0.2,
-        **kwargs,
-    ):
+        in_dim: int,
+        graph_hiddens: List[int] = [64, 128],
+        device: str = "cpu",
+        attn_head: int = 4,
+        activation: float = 0.2,
+        **kwargs: Any,
+    ) -> None:
         super(GraphModel, self).__init__()
         """
-        Params:
-            in_dim: the feature dim of each node
+        Graph neural network model using GAT layers and global attention pooling
+        
+        Args:
+            in_dim: Feature dimension of each node
+            graph_hiddens: List of hidden dimensions for graph layers
+            device: Device to run on
+            attn_head: Number of attention heads
+            activation: Negative slope for activation function
         """
         layers = []
 
@@ -43,10 +50,16 @@ class GraphModel(nn.Module):
         self.out_dim = graph_hiddens[-1]
         self.pooling = GlobalAttentionPooling(nn.Linear(self.out_dim, 1))
 
-    def forward(self, graph, x):
+    def forward(self, graph: Any, x: torch.Tensor) -> torch.Tensor:
         """
-        Input:
-            x -- tensor float [batch_size*node_num, feature_in_dim] N = {s1, s2, s3, e1, e2, e3}
+        Forward pass
+
+        Args:
+            graph: DGL graph object
+            x: Node feature tensor [batch_size*node_num, feature_in_dim]
+
+        Returns:
+            Graph-level representation [batch_size, out_dim]
         """
         out = None
         for layer in self.net:
@@ -58,16 +71,27 @@ class GraphModel(nn.Module):
 
 
 class Chomp1d(nn.Module):
-    def __init__(self, chomp_size):
+    """Module for cropping excess padding after convolution"""
+
+    def __init__(self, chomp_size: int) -> None:
         super(Chomp1d, self).__init__()
         self.chomp_size = chomp_size
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x[:, :, : -self.chomp_size].contiguous()
 
 
 class ConvNet(nn.Module):
-    def __init__(self, num_inputs, num_channels, kernel_sizes, dilation=2, dev="cpu"):
+    """1D convolutional network for processing time series data"""
+
+    def __init__(
+        self,
+        num_inputs: int,
+        num_channels: List[int],
+        kernel_sizes: List[int],
+        dilation: int = 2,
+        dev: str = "cpu",
+    ) -> None:
         super(ConvNet, self).__init__()
         layers = []
         for i in range(len(kernel_sizes)):
@@ -95,7 +119,14 @@ class ConvNet(nn.Module):
         self.out_dim = num_channels[-1]
         self.network.to(dev)
 
-    def forward(self, x):  # [batch_size, T, in_dim]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input tensor [batch_size, T, in_dim]
+
+        Returns:
+            Output tensor [batch_size, T, out_dim]
+        """
         x = x.permute(0, 2, 1).float()  # [batch_size, in_dim, T]
         out = self.network(x)  # [batch_size, out_dim, T]
         out = out.permute(0, 2, 1)  # [batch_size, T, out_dim]
@@ -103,11 +134,13 @@ class ConvNet(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, input_size, seq_len):
+    """Self-attention mechanism module"""
+
+    def __init__(self, input_size: int, seq_len: int) -> None:
         """
         Args:
-            input_size: int, hidden_size * num_directions
-            seq_len: window_size
+            input_size: Input size (hidden_size * num_directions)
+            seq_len: Sequence length (window_size)
         """
         super(SelfAttention, self).__init__()
         self.atten_w = nn.Parameter(torch.randn(seq_len, input_size, 1))
@@ -115,8 +148,14 @@ class SelfAttention(nn.Module):
         self.glorot(self.atten_w)
         self.atten_bias.data.fill_(0)
 
-    def forward(self, x):
-        # x: [batch_size, window_size, input_size]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input tensor [batch_size, window_size, input_size]
+
+        Returns:
+            Weighted sum tensor
+        """
         input_tensor = x.transpose(1, 0)  # w x b x h
         input_tensor = (
             torch.bmm(input_tensor, self.atten_w) + self.atten_bias
@@ -126,22 +165,25 @@ class SelfAttention(nn.Module):
         weighted_sum = torch.bmm(atten_weight.transpose(1, 2), x).squeeze()
         return weighted_sum
 
-    def glorot(self, tensor):
+    def glorot(self, tensor: Optional[torch.Tensor]) -> None:
+        """Glorot initialization"""
         if tensor is not None:
             stdv = math.sqrt(6.0 / (tensor.size(-2) + tensor.size(-1)))
             tensor.data.uniform_(-stdv, stdv)
 
 
 class TraceModel(nn.Module):
+    """Model for processing trace data"""
+
     def __init__(
         self,
-        device="cpu",
-        trace_hiddens=[20, 50],
-        trace_kernel_sizes=[3, 3],
-        self_attn=False,
-        chunk_length=None,
-        **kwargs,
-    ):
+        device: str = "cpu",
+        trace_hiddens: List[int] = [20, 50],
+        trace_kernel_sizes: List[int] = [3, 3],
+        self_attn: bool = False,
+        chunk_length: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
         super(TraceModel, self).__init__()
 
         self.out_dim = trace_hiddens[-1]
@@ -158,7 +200,14 @@ class TraceModel(nn.Module):
             assert chunk_length is not None
             self.attn_layer = SelfAttention(self.out_dim, chunk_length)
 
-    def forward(self, x: torch.Tensor):  # [bz, T, 1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Trace data tensor [batch_size, T, 1]
+
+        Returns:
+            Processed features [batch_size, out_dim]
+        """
         hidden_states = self.net(x)
         if self.self_attn:
             return self.attn_layer(hidden_states)
@@ -166,16 +215,18 @@ class TraceModel(nn.Module):
 
 
 class MetricModel(nn.Module):
+    """Model for processing metric data"""
+
     def __init__(
         self,
-        metric_num,
-        device="cpu",
-        metric_hiddens=[64, 128],
-        metric_kernel_sizes=[3, 3],
-        self_attn=False,
-        chunk_length=None,
-        **kwargs,
-    ):
+        metric_num: int,
+        device: str = "cpu",
+        metric_hiddens: List[int] = [64, 128],
+        metric_kernel_sizes: List[int] = [3, 3],
+        self_attn: bool = False,
+        chunk_length: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
         super(MetricModel, self).__init__()
         self.metric_num = metric_num
         self.out_dim = metric_hiddens[-1]
@@ -194,7 +245,14 @@ class MetricModel(nn.Module):
             assert chunk_length is not None
             self.attn_layer = SelfAttention(self.out_dim, chunk_length)
 
-    def forward(self, x):  # [bz, T, metric_num]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Metric data tensor [batch_size, T, metric_num]
+
+        Returns:
+            Processed features [batch_size, out_dim]
+        """
         assert x.shape[-1] == self.metric_num
         hidden_states = self.net(x)
         if self.self_attn:
@@ -203,30 +261,37 @@ class MetricModel(nn.Module):
 
 
 class LogModel(nn.Module):
-    def __init__(self, event_num, out_dim):
+    """Model for processing log data"""
+
+    def __init__(self, event_num: int, out_dim: int) -> None:
         super(LogModel, self).__init__()
         self.embedder = nn.Linear(event_num, out_dim)
 
-    def forward(self, paras: torch.Tensor):  # [bz, event_num]
+    def forward(self, paras: torch.Tensor) -> torch.Tensor:
         """
-        Input:
-            paras: mu with length of event_num
+        Args:
+            paras: Event parameter tensor [batch_size, event_num]
+
+        Returns:
+            Embedded features [batch_size, out_dim]
         """
         return self.embedder(paras)
 
 
 class MultiSourceEncoder(nn.Module):
+    """Multi-source data encoder that fuses trace, log, and metric data"""
+
     def __init__(
         self,
-        event_num,
-        metric_num,
-        node_num,
-        device,
-        log_dim=64,
-        fuse_dim=64,
-        alpha=0.5,
-        **kwargs,
-    ):
+        event_num: int,
+        metric_num: int,
+        node_num: int,
+        device: str,
+        log_dim: int = 64,
+        fuse_dim: int = 64,
+        alpha: float = 0.5,
+        **kwargs: Any,
+    ) -> None:
         super(MultiSourceEncoder, self).__init__()
         self.node_num = node_num
         self.alpha = alpha
@@ -248,27 +313,36 @@ class MultiSourceEncoder(nn.Module):
         self.status_model = GraphModel(in_dim=self.feat_in_dim, device=device, **kwargs)
         self.feat_out_dim = self.status_model.out_dim
 
-    def forward(self, graph):
+    def forward(self, graph: Any) -> torch.Tensor:
+        """
+        Args:
+            graph: DGL graph object containing trace, log, and metric data
+
+        Returns:
+            Fused graph-level representation [batch_size, feat_out_dim]
+        """
         trace_embedding = self.trace_model(
             graph.ndata["traces"]
-        )  # [bz*node_num, T, trace_dim]
+        )  # [bz*node_num, trace_dim]
         log_embedding = self.log_model(graph.ndata["logs"])  # [bz*node_num, log_dim]
         metric_embedding = self.metric_model(
             graph.ndata["metrics"]
         )  # [bz*node_num, metric_dim]
 
-        # [bz*node_num, fuse_in] --> [bz, fuse_out], fuse_in: sum of dims from multi sources
+        # Fuse multi-source features
         feature = self.activate(
             self.fuse(
                 torch.cat((trace_embedding, log_embedding, metric_embedding), dim=-1)
             )
-        )  # [bz*node_num, node_dim]
-        embeddings = self.status_model(graph, feature)  # [bz, graph_dim]
+        )  # [bz*node_num, feat_in_dim]
+        embeddings = self.status_model(graph, feature)  # [bz, feat_out_dim]
         return embeddings
 
 
 class FullyConnected(nn.Module):
-    def __init__(self, in_dim, out_dim, linear_sizes):
+    """Fully connected network"""
+
+    def __init__(self, in_dim: int, out_dim: int, linear_sizes: List[int]) -> None:
         super(FullyConnected, self).__init__()
         layers = []
         for i, hidden in enumerate(linear_sizes):
@@ -277,14 +351,30 @@ class FullyConnected(nn.Module):
         layers += [nn.Linear(linear_sizes[-1], out_dim)]
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor):  # [batch_size, in_dim]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input tensor [batch_size, in_dim]
+
+        Returns:
+            Output tensor [batch_size, out_dim]
+        """
         return self.net(x)
 
 
 class MainModel(nn.Module):
+    """Main model for anomaly detection and fault localization"""
+
     def __init__(
-        self, event_num, metric_num, node_num, device, alpha=0.1, debug=False, **kwargs
-    ):
+        self,
+        event_num: int,
+        metric_num: int,
+        node_num: int,
+        device: str,
+        alpha: float = 0.1,
+        debug: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super(MainModel, self).__init__()
 
         self.device = device
@@ -295,20 +385,34 @@ class MainModel(nn.Module):
             event_num, metric_num, node_num, device, debug=debug, alpha=alpha, **kwargs
         )
 
+        # Anomaly detector (binary classification: normal/anomaly)
         self.detecter = FullyConnected(
             self.encoder.feat_out_dim, 2, kwargs["detect_hiddens"]
         ).to(device)
         self.detecter_criterion = nn.CrossEntropyLoss()
+
+        # Fault localizer (multi-classification: which node is faulty)
         self.localizer = FullyConnected(
             self.encoder.feat_out_dim, node_num, kwargs["locate_hiddens"]
         ).to(device)
         self.localizer_criterion = nn.CrossEntropyLoss(ignore_index=-1)
         self.get_prob = nn.Softmax(dim=-1)
 
-    def forward(self, graph, fault_indexs):
+    def forward(self, graph: Any, fault_indexs: torch.Tensor) -> Dict[str, Any]:
+        """
+        Forward pass
+
+        Args:
+            graph: DGL graph object
+            fault_indexs: Fault node indices [batch_size]
+
+        Returns:
+            Dictionary containing loss, predictions, and probabilities
+        """
         batch_size = graph.batch_size
         embeddings = self.encoder(graph)
 
+        # Construct ground truth labels
         y_prob = torch.zeros((batch_size, self.node_num)).to(self.device)
         for i in range(batch_size):
             if fault_indexs[i] > -1:
@@ -317,12 +421,17 @@ class MainModel(nn.Module):
         for i in range(batch_size):
             y_anomaly[i] = int(fault_indexs[i] > -1)
 
+        # Fault localization
         locate_logits = self.localizer(embeddings)
         locate_loss = self.localizer_criterion(
             locate_logits, fault_indexs.to(self.device)
         )
+
+        # Anomaly detection
         detect_logits = self.detecter(embeddings)
         detect_loss = self.detecter_criterion(detect_logits, y_anomaly)
+
+        # Total loss
         loss = self.alpha * detect_loss + (1 - self.alpha) * locate_loss
 
         node_probs = self.get_prob(locate_logits.detach()).cpu().numpy()
@@ -335,7 +444,23 @@ class MainModel(nn.Module):
             "pred_prob": node_probs,
         }
 
-    def inference(self, batch_size, node_probs, detect_logits=None):
+    def inference(
+        self,
+        batch_size: int,
+        node_probs: np.ndarray,
+        detect_logits: Optional[torch.Tensor] = None,
+    ) -> List[List[int]]:
+        """
+        Inference phase for generating predictions
+
+        Args:
+            batch_size: Batch size
+            node_probs: Node probabilities [batch_size, node_num]
+            detect_logits: Detection logits [batch_size, 2]
+
+        Returns:
+            List of predicted fault nodes for each sample
+        """
         node_list = np.flip(node_probs.argsort(axis=1), axis=1)
 
         y_pred = []
@@ -345,9 +470,11 @@ class MainModel(nn.Module):
                     detect_logits.detach().cpu().numpy().argmax(axis=1).squeeze()
                 )
                 if detect_pred[i] < 1:
-                    y_pred.append([-1])
+                    y_pred.append([-1])  # Predicted as normal
                 else:
-                    y_pred.append(node_list[i])
+                    y_pred.append(
+                        node_list[i]
+                    )  # Predicted as anomaly, return sorted nodes
             else:
                 y_pred.append(node_list[i])
 

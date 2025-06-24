@@ -1,6 +1,7 @@
 import os
 import time
 import copy
+from typing import Dict, Any, Optional, Tuple
 
 import torch
 from torch import nn
@@ -13,21 +14,39 @@ from .model import MainModel
 
 
 class BaseModel(nn.Module):
+    """Base training class for the EADRO model"""
+
     def __init__(
         self,
-        event_num,
-        metric_num,
-        node_num,
-        device,
-        lr=1e-3,
-        epochs=50,
-        patience=5,
-        result_dir="./",
-        hash_id=None,
-        use_wandb=False,
-        wandb_project="eadro-training",
-        **kwargs,
-    ):
+        event_num: int,
+        metric_num: int,
+        node_num: int,
+        device: str,
+        lr: float = 1e-3,
+        epochs: int = 50,
+        patience: int = 5,
+        result_dir: str = "./",
+        hash_id: Optional[str] = None,
+        use_wandb: bool = False,
+        wandb_project: str = "eadro-training",
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize the base model for EADRO
+
+        Args:
+            event_num: Number of event types
+            metric_num: Number of metrics
+            node_num: Number of nodes
+            device: Device to run on ("cpu" or "cuda")
+            lr: Learning rate
+            epochs: Number of training epochs
+            patience: Early stopping patience
+            result_dir: Directory to save results
+            hash_id: Experiment hash ID
+            use_wandb: Whether to use wandb for logging
+            wandb_project: Wandb project name
+        """
         super(BaseModel, self).__init__()
 
         self.epochs = epochs
@@ -60,10 +79,23 @@ class BaseModel(nn.Module):
         self.model = MainModel(event_num, metric_num, node_num, device, **kwargs)
         self.model.to(device)
 
-    def evaluate(self, test_loader, datatype="Test", log_to_wandb=True):
+    def evaluate(
+        self, test_loader: Any, datatype: str = "Test", log_to_wandb: bool = True
+    ) -> Dict[str, float]:
+        """
+        Evaluate model performance
+
+        Args:
+            test_loader: Test data loader
+            datatype: Data type identifier ("Test", "Train", "Val")
+            log_to_wandb: Whether to log metrics to wandb
+
+        Returns:
+            Dictionary containing various evaluation metrics
+        """
         self.model.eval()
         hrs, ndcgs = np.zeros(5), np.zeros(5)
-        TP, FP, FN = 0, 0, 0
+        TP, FP, FN = 0, 0, 0  # True Positive, False Positive, False Negative
         batch_cnt, epoch_loss = 0, 0.0
 
         with torch.no_grad():
@@ -71,19 +103,19 @@ class BaseModel(nn.Module):
                 res = self.model.forward(graph.to(self.device), ground_truths)
                 for idx, faulty_nodes in enumerate(res["y_pred"]):
                     culprit = ground_truths[idx].item()
-                    if culprit == -1:
+                    if culprit == -1:  # Normal sample
                         if faulty_nodes[0] == -1:
-                            TP += 1
+                            TP += 1  # Correctly predicted as normal
                         else:
-                            FP += 1
-                    else:
+                            FP += 1  # Incorrectly predicted as abnormal
+                    else:  # Abnormal sample
                         if faulty_nodes[0] == -1:
-                            FN += 1
+                            FN += 1  # Incorrectly predicted as normal
                         else:
-                            TP += 1
+                            TP += 1  # Correctly predicted as abnormal
                             rank = list(faulty_nodes).index(culprit)
                             for j in range(5):
-                                hrs[j] += int(rank <= j)
+                                hrs[j] += int(rank <= j)  # Calculate Hit Rate
                                 ndcgs[j] += ndcg_score(
                                     np.array([res["y_prob"][idx]]).reshape(1, -1),
                                     np.array([res["pred_prob"][idx]]).reshape(1, -1),
@@ -92,13 +124,14 @@ class BaseModel(nn.Module):
                 epoch_loss += res["loss"].item()
                 batch_cnt += 1
 
-        pos = TP + FN
+        pos = TP + FN  # Total number of positive samples
         eval_results = {
             "F1": TP * 2.0 / (TP + FP + pos) if (TP + FP + pos) > 0 else 0,
-            "Rec": TP * 1.0 / pos if pos > 0 else 0,
-            "Pre": TP * 1.0 / (TP + FP) if (TP + FP) > 0 else 0,
+            "Rec": TP * 1.0 / pos if pos > 0 else 0,  # Recall
+            "Pre": TP * 1.0 / (TP + FP) if (TP + FP) > 0 else 0,  # Precision
         }
 
+        # Calculate Hit Rate and NDCG metrics
         for j in [1, 3, 5]:
             eval_results["HR@" + str(j)] = hrs[j - 1] * 1.0 / pos
             eval_results["ndcg@" + str(j)] = ndcgs[j - 1] * 1.0 / pos
@@ -121,7 +154,23 @@ class BaseModel(nn.Module):
 
         return eval_results
 
-    def fit(self, train_loader, test_loader=None, evaluation_epoch=10):
+    def fit(
+        self,
+        train_loader: Any,
+        test_loader: Optional[Any] = None,
+        evaluation_epoch: int = 10,
+    ) -> Tuple[Optional[Dict[str, float]], Optional[int]]:
+        """
+        Train the model
+
+        Args:
+            train_loader: Training data loader
+            test_loader: Test data loader
+            evaluation_epoch: Number of epochs between evaluations
+
+        Returns:
+            Tuple containing the best evaluation results and the epoch of convergence
+        """
         best_hr1, coverage, best_state, eval_res = -1, None, None, None  # evaluation
         pre_loss, worse_count = float("inf"), 0
 
@@ -181,6 +230,7 @@ class BaseModel(nn.Module):
 
                 wandb.log(wandb_data)
 
+            # Early stopping mechanism
             if avg_epoch_loss > pre_loss:
                 worse_count += 1
                 if self.patience > 0 and worse_count >= self.patience:
@@ -190,6 +240,7 @@ class BaseModel(nn.Module):
                 worse_count = 0
             pre_loss = avg_epoch_loss
 
+            # Periodic evaluation on the test set
             if (epoch + 1) % evaluation_epoch == 0:
                 test_results = self.evaluate(test_loader, datatype="Test")
                 test_metrics_history.append(
@@ -204,7 +255,8 @@ class BaseModel(nn.Module):
                     )
                     best_state = copy.deepcopy(self.model.state_dict())
 
-                self.save_model(best_state)
+                if best_state is not None:
+                    self.save_model(best_state)
 
         if coverage and coverage > 5:
             logging.info(
@@ -221,12 +273,25 @@ class BaseModel(nn.Module):
 
         return eval_res, coverage
 
-    def load_model(self, model_save_file=""):
+    def load_model(self, model_save_file: str = "") -> None:
+        """
+        Load a pre-trained model
+
+        Args:
+            model_save_file: Path to the model file
+        """
         self.model.load_state_dict(
             torch.load(model_save_file, map_location=self.device)
         )
 
-    def save_model(self, state, file=None):
+    def save_model(self, state: Dict[str, Any], file: Optional[str] = None) -> None:
+        """
+        Save the model state
+
+        Args:
+            state: Model state dictionary
+            file: Path to save the file, defaults to None to use the default path
+        """
         if file is None:
             file = os.path.join(self.model_save_dir, "model.ckpt")
         try:
