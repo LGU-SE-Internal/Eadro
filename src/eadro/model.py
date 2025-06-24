@@ -283,7 +283,7 @@ class FullyConnected(nn.Module):
 
 class MainModel(nn.Module):
     def __init__(
-        self, event_num, metric_num, node_num, device, alpha=0.5, debug=False, **kwargs
+        self, event_num, metric_num, node_num, device, alpha=0.1, debug=False, **kwargs
     ):
         super(MainModel, self).__init__()
 
@@ -307,7 +307,7 @@ class MainModel(nn.Module):
 
     def forward(self, graph, fault_indexs):
         batch_size = graph.batch_size
-        embeddings = self.encoder(graph)  # [bz, feat_out_dim]
+        embeddings = self.encoder(graph)
 
         y_prob = torch.zeros((batch_size, self.node_num)).to(self.device)
         for i in range(batch_size):

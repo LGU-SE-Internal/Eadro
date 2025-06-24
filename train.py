@@ -190,6 +190,8 @@ def main(
     activation: float = typer.Option(0.2, help="LeakyReLU negative slope"),
     result_dir: str = typer.Option("result/", help="Result directory"),
     chunks_dir: str = typer.Option("dataset_output", help="Chunks directory"),
+    use_wandb: bool = typer.Option(True, help="Use Weights & Biases for logging"),
+    wandb_project: str = typer.Option("eadro-training", help="W&B project name"),
     config_file: Optional[str] = typer.Option(
         None, "--config", help="Config file path"
     ),
@@ -216,6 +218,8 @@ def main(
         "activation": activation,
         "result_dir": result_dir,
         "chunks_dir": chunks_dir,
+        "use_wandb": use_wandb,
+        "wandb_project": wandb_project,
     }
 
     if config_file and Path(config_file).exists():
