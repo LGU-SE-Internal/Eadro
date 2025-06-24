@@ -18,6 +18,10 @@ dependencies = [
     "dgl",
     "typer>=0.16.0",
     "loguru>=0.7.3",
+    "rcabench>=1.0.19",
+    "snakeviz>=2.2.2",
+    "flameprof>=0.4",
+    "polars>=1.31.0",
 ]
 [tool.uv.sources]
 dgl = { url = "https://data.dgl.ai/wheels/torch-2.4/dgl-2.4.0-cp312-cp312-manylinux1_x86_64.whl" }

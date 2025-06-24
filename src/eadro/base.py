@@ -96,7 +96,7 @@ class BaseModel(nn.Module):
         best_hr1, coverage, best_state, eval_res = -1, None, None, None  # evaluation
         pre_loss, worse_count = float("inf"), 0  # early break
 
-        optimizer = torch.optim.adam.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         # optimizer = torch.optim.SGD(self.model.parameters(), lr=self.lr, momentum=0.99)
 
         for epoch in range(1, self.epochs + 1):
@@ -107,10 +107,7 @@ class BaseModel(nn.Module):
                 optimizer.zero_grad()
                 loss = self.model.forward(graph.to(self.device), label)["loss"]
                 loss.backward()
-                # if self.debug:
-                #     for name, parms in self.model.named_parameters():
-                #         if name=='encoder.graph_model.net.weight':
-                #             print(name, "--> grad:",parms.grad)
+
                 optimizer.step()
                 epoch_loss += loss.item()
                 batch_cnt += 1
