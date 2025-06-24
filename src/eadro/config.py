@@ -14,7 +14,7 @@ class Config:
             "patience": 10,
             "self_attn": True,
             "fuse_dim": 128,
-            "alpha": 0.5,
+            "alpha": 0.1,
             "locate_hiddens": [64],
             "detect_hiddens": [64],
             "log_dim": 16,

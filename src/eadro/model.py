@@ -398,7 +398,7 @@ class MainModel(nn.Module):
         self.localizer_criterion = nn.CrossEntropyLoss(ignore_index=-1)
         self.get_prob = nn.Softmax(dim=-1)
 
-    def forward(self, graph: Any, fault_indexs: torch.Tensor) -> Dict[str, Any]:
+    def forward(self, graph: Any, ground_truth: torch.Tensor) -> Dict[str, Any]:
         """
         Forward pass
 
@@ -415,16 +415,16 @@ class MainModel(nn.Module):
         # Construct ground truth labels
         y_prob = torch.zeros((batch_size, self.node_num)).to(self.device)
         for i in range(batch_size):
-            if fault_indexs[i] > -1:
-                y_prob[i, fault_indexs[i]] = 1
+            if ground_truth[i] > -1:
+                y_prob[i, ground_truth[i]] = 1
         y_anomaly = torch.zeros(batch_size).long().to(self.device)
         for i in range(batch_size):
-            y_anomaly[i] = int(fault_indexs[i] > -1)
+            y_anomaly[i] = int(ground_truth[i] > -1)
 
         # Fault localization
         locate_logits = self.localizer(embeddings)
         locate_loss = self.localizer_criterion(
-            locate_logits, fault_indexs.to(self.device)
+            locate_logits, ground_truth.to(self.device)
         )
 
         # Anomaly detection

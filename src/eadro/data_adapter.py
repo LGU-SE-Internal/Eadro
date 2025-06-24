@@ -3,11 +3,12 @@ import pickle
 import json
 import os
 import random
-import multiprocessing as mp
+import shutil
+import traceback
+import gc
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Set
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import polars as pl
@@ -106,7 +107,6 @@ class CaseProcessor:
         self.global_metadata = global_metadata
 
     def _process_time_column(self, df: pl.DataFrame) -> pl.DataFrame:
-        """统一处理时间列转换的辅助方法"""
         if "time" not in df.columns:
             return df
 
@@ -115,20 +115,25 @@ class CaseProcessor:
             if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
                 "String"
             ):
-                return df.with_columns(
+                result = df.with_columns(
                     [pl.col("time").str.to_datetime().dt.offset_by("8h").alias("time")]
                 )
             elif (
                 "datetime" in str(time_dtype).lower()
                 or "timestamp" in str(time_dtype).lower()
             ):
-                return df.with_columns(
+                result = df.with_columns(
                     [pl.col("time").dt.offset_by("8h").alias("time")]
                 )
             else:
-                return df.with_columns(
+                result = df.with_columns(
                     [pl.col("time").cast(pl.Datetime).dt.offset_by("8h").alias("time")]
                 )
+
+            # Immediate cleanup
+            del df
+            gc.collect()
+            return result
         except Exception as e:
             logger.warning(f"Error processing time column: {e}")
             return df
@@ -136,7 +141,6 @@ class CaseProcessor:
     def _assign_chunk_indices(
         self, df: pl.DataFrame, intervals: List[Tuple]
     ) -> pl.DataFrame:
-        """统一分配chunk索引的辅助方法"""
         chunk_expr = pl.lit(None, dtype=pl.Int32)
         for chunk_idx, (start_time, end_time) in enumerate(intervals):
             chunk_expr = (
@@ -151,14 +155,18 @@ class CaseProcessor:
 
     def derive_filenames(self, data_pack: Path) -> Dict[str, Path]:
         return {
-            "abnormal_log": data_pack / "abnormal_logs.parquet",
-            "normal_log": data_pack / "normal_logs.parquet",
-            "abnormal_metric": data_pack / "abnormal_metrics.parquet",
-            "normal_metric": data_pack / "normal_metrics.parquet",
-            "abnormal_trace": data_pack / "abnormal_traces.parquet",
-            "normal_trace": data_pack / "normal_traces.parquet",
-            "env": data_pack / "env.json",
-            "injection": data_pack / "injection.json",
+            "abnormal_log": data_pack / "converted" / "abnormal_logs.parquet",
+            "normal_log": data_pack / "converted" / "normal_logs.parquet",
+            "abnormal_metric": data_pack / "converted" / "abnormal_metrics.parquet",
+            "normal_metric": data_pack / "converted" / "normal_metrics.parquet",
+            "abnormal_metric_sum": data_pack
+            / "converted"
+            / "abnormal_metrics_sum.parquet",
+            "normal_metric_sum": data_pack / "converted" / "normal_metrics_sum.parquet",
+            "abnormal_trace": data_pack / "converted" / "abnormal_traces.parquet",
+            "normal_trace": data_pack / "converted" / "normal_traces.parquet",
+            "env": data_pack / "converted" / "env.json",
+            "injection": data_pack / "converted" / "injection.json",
         }
 
     def get_time_intervals(
@@ -185,7 +193,6 @@ class CaseProcessor:
 
         return intervals
 
-    @timeit()
     def process_logs(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> np.ndarray:
@@ -197,59 +204,87 @@ class CaseProcessor:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
-            df = self._process_time_column(df)
 
-            # 预处理：过滤有效服务
-            df = df.filter(
-                pl.col("service_name").is_in(
-                    list(self.global_metadata.service2node_id.keys())
+            try:
+                df = self._process_time_column(df)
+
+                # 预处理：过滤有效服务
+                filtered_df = df.filter(
+                    pl.col("service_name").is_in(
+                        list(self.global_metadata.service2node_id.keys())
+                    )
                 )
-            )
-            if df.height == 0:
+                del df  # 立即释放原始df
+                gc.collect()
+
+                if filtered_df.height == 0:
+                    del filtered_df
+                    continue
+
+                # 映射service到node_id和message到template_id
+                mapped_df = filtered_df.with_columns(
+                    [
+                        pl.col("service_name")
+                        .replace(self.global_metadata.service2node_id, default=-1)
+                        .alias("node_id"),
+                        pl.col("message")
+                        .cast(pl.Utf8)
+                        .str.strip_chars()
+                        .alias("message_str"),
+                    ]
+                ).filter(pl.col("node_id") != -1)
+                del filtered_df  # 立即释放过滤后的df
+                gc.collect()
+
+                # 映射template_id
+                template_mapped_df = mapped_df.with_columns(
+                    [
+                        pl.col("message_str")
+                        .replace(self.global_metadata.template2id, default=0)
+                        .alias("template_id")
+                    ]
+                )
+                del mapped_df  # 立即释放映射后的df
+                gc.collect()
+
+                # 为每个时间段分配chunk_idx
+                chunk_assigned_df = self._assign_chunk_indices(
+                    template_mapped_df, intervals
+                )
+                del template_mapped_df  # 立即释放模板映射后的df
+                gc.collect()
+
+                if chunk_assigned_df.height == 0:
+                    del chunk_assigned_df
+                    continue
+
+                # 使用groupby进行向量化计数
+                counts = chunk_assigned_df.group_by(
+                    ["chunk_idx", "node_id", "template_id"]
+                ).len()
+                del chunk_assigned_df  # 立即释放chunk分配后的df
+                gc.collect()
+
+                # 批量更新结果矩阵
+                for row in counts.iter_rows(named=True):
+                    chunk_idx = row["chunk_idx"]
+                    node_id = row["node_id"]
+                    template_id = row["template_id"]
+                    count = row["len"]
+                    result[chunk_idx, node_id, template_id] += count
+
+                del counts  # 立即释放计数结果
+                gc.collect()
+
+            except Exception as e:
+                logger.warning(f"Error processing {file_type}: {e}")
+                if "df" in locals():
+                    del df
+                gc.collect()
                 continue
-
-            # 映射service到node_id和message到template_id
-            df = df.with_columns(
-                [
-                    pl.col("service_name")
-                    .replace(self.global_metadata.service2node_id, default=-1)
-                    .alias("node_id"),
-                    pl.col("message")
-                    .cast(pl.Utf8)
-                    .str.strip_chars()
-                    .alias("message_str"),
-                ]
-            ).filter(pl.col("node_id") != -1)
-
-            # 映射template_id
-            df = df.with_columns(
-                [
-                    pl.col("message_str")
-                    .replace(self.global_metadata.template2id, default=0)
-                    .alias("template_id")
-                ]
-            )
-
-            # 为每个时间段分配chunk_idx
-            df = self._assign_chunk_indices(df, intervals)
-
-            if df.height == 0:
-                continue
-
-            # 使用groupby进行向量化计数
-            counts = df.group_by(["chunk_idx", "node_id", "template_id"]).len()
-
-            # 批量更新结果矩阵
-            for row in counts.iter_rows(named=True):
-                chunk_idx = row["chunk_idx"]
-                node_id = row["node_id"]
-                template_id = row["template_id"]
-                count = row["len"]
-                result[chunk_idx, node_id, template_id] += count
 
         return result
 
-    @timeit()
     def process_metrics(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> np.ndarray:
@@ -261,67 +296,84 @@ class CaseProcessor:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
-            df = self._process_time_column(df)
 
-            # 处理service_name字段
-            df = df.with_columns(
-                [
-                    pl.coalesce(
-                        [
-                            pl.col("attr.k8s.deployment.name"),
-                            pl.col("attr.k8s.replicaset.name"),
-                        ]
-                    ).alias("service_name")
-                ]
-            )
+            try:
+                df = self._process_time_column(df)
 
-            # 预过滤有效的服务和指标
-            df = df.filter(
-                pl.col("service_name").is_in(
-                    list(self.global_metadata.service2node_id.keys())
+                service_mapped_df = df.with_columns(
+                    [
+                        pl.coalesce(
+                            [
+                                pl.col("attr.k8s.deployment.name"),
+                                pl.col("attr.k8s.replicaset.name"),
+                            ]
+                        ).alias("service_name")
+                    ]
                 )
-                & pl.col("metric").is_in(self.global_metadata.metric_names)
-            )
+                del df  # 立即释放原始df
+                gc.collect()
 
-            if df.height == 0:
+                filtered_df = service_mapped_df.filter(
+                    pl.col("service_name").is_in(
+                        list(self.global_metadata.service2node_id.keys())
+                    )
+                    & pl.col("metric").is_in(self.global_metadata.metric_names)
+                )
+                del service_mapped_df  # 立即释放服务映射后的df
+                gc.collect()
+
+                if filtered_df.height == 0:
+                    del filtered_df
+                    continue
+
+                metric_mapping = {
+                    metric: idx
+                    for idx, metric in enumerate(self.global_metadata.metric_names)
+                }
+                mapped_df = filtered_df.with_columns(
+                    [
+                        pl.col("service_name")
+                        .replace(self.global_metadata.service2node_id, default=-1)
+                        .alias("node_id"),
+                        pl.col("metric")
+                        .replace(metric_mapping, default=-1)
+                        .alias("metric_id"),
+                    ]
+                ).filter((pl.col("node_id") != -1) & (pl.col("metric_id") != -1))
+                del filtered_df  # 立即释放过滤后的df
+                gc.collect()
+
+                chunk_assigned_df = self._assign_chunk_indices(mapped_df, intervals)
+                del mapped_df  # 立即释放映射后的df
+                gc.collect()
+
+                grouped = chunk_assigned_df.group_by(
+                    ["chunk_idx", "node_id", "metric_id"]
+                ).agg([pl.col("value").sort_by("time").alias("values")])
+                del chunk_assigned_df  # 立即释放chunk分配后的df
+                gc.collect()
+
+                for row in grouped.iter_rows(named=True):
+                    chunk_idx = row["chunk_idx"]
+                    node_id = row["node_id"]
+                    metric_id = row["metric_id"]
+                    values = np.array(row["values"])
+
+                    values = self._normalize_sequence_length(values, self.chunk_length)
+                    result[chunk_idx, node_id, :, metric_id] = values
+
+                del grouped  # 立即释放分组结果
+                gc.collect()
+
+            except Exception as e:
+                logger.warning(f"Error processing {file_type}: {e}")
+                if "df" in locals():
+                    del df
+                gc.collect()
                 continue
-
-            # 向量化映射
-            metric_mapping = {
-                metric: idx
-                for idx, metric in enumerate(self.global_metadata.metric_names)
-            }
-            df = df.with_columns(
-                [
-                    pl.col("service_name")
-                    .replace(self.global_metadata.service2node_id, default=-1)
-                    .alias("node_id"),
-                    pl.col("metric")
-                    .replace(metric_mapping, default=-1)
-                    .alias("metric_id"),
-                ]
-            ).filter((pl.col("node_id") != -1) & (pl.col("metric_id") != -1))
-
-            # 使用辅助方法分配chunk_idx
-            df = self._assign_chunk_indices(df, intervals)
-
-            # 处理每个组合
-            grouped = df.group_by(["chunk_idx", "node_id", "metric_id"]).agg(
-                [pl.col("value").sort_by("time").alias("values")]
-            )
-
-            for row in grouped.iter_rows(named=True):
-                chunk_idx = row["chunk_idx"]
-                node_id = row["node_id"]
-                metric_id = row["metric_id"]
-                values = np.array(row["values"])
-
-                values = self._normalize_sequence_length(values, self.chunk_length)
-                result[chunk_idx, node_id, :, metric_id] = values
 
         return result
 
-    @timeit()
     def process_traces(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> np.ndarray:
@@ -339,36 +391,47 @@ class CaseProcessor:
 
                 required_cols = ["time", "service_name", "duration"]
                 if not all(col in df.columns for col in required_cols):
+                    del df
                     continue
 
                 df = self._process_time_column(df)
 
-                df = df.filter(pl.col("service_name").is_in(valid_services))
+                filtered_df = df.filter(pl.col("service_name").is_in(valid_services))
+                del df
 
-                if df.height == 0:
+                if filtered_df.height == 0:
+                    del filtered_df
                     continue
 
-                df = df.with_columns(
+                mapped_df = filtered_df.with_columns(
                     [
                         pl.col("service_name")
                         .replace(service_mapping, default=-1)
                         .alias("node_id")
                     ]
                 )
+                del filtered_df
 
-                df = df.filter(pl.col("node_id") != -1)
+                valid_mapped_df = mapped_df.filter(pl.col("node_id") != -1)
+                del mapped_df
 
-                if df.height == 0:
+                if valid_mapped_df.height == 0:
+                    del valid_mapped_df
                     continue
 
-                df = self._assign_chunk_indices(df, intervals)
+                chunk_assigned_df = self._assign_chunk_indices(
+                    valid_mapped_df, intervals
+                )
+                del valid_mapped_df
 
-                if df.height == 0:
+                if chunk_assigned_df.height == 0:
+                    del chunk_assigned_df
                     continue
 
-                grouped = df.group_by(["chunk_idx", "node_id"]).agg(
+                grouped = chunk_assigned_df.group_by(["chunk_idx", "node_id"]).agg(
                     [pl.col("duration").sort_by("time").alias("durations")]
                 )
+                del chunk_assigned_df
 
                 for row in grouped.iter_rows(named=True):
                     chunk_idx = int(row["chunk_idx"])
@@ -381,84 +444,113 @@ class CaseProcessor:
                         )
                         result[chunk_idx, node_id, :, 0] = durations
 
+                del grouped
+
             except Exception as e:
                 logger.warning(f"Error processing {file_type}: {e}")
+                if "df" in locals():
+                    del df
+                gc.collect()
                 continue
 
         return result
 
-    @timeit()
     def extract_service_graph(
         self, data_files: Dict[str, Path]
     ) -> Set[Tuple[int, int]]:
         edges = set()
         span_to_service = {}
 
-        # 构建span到service的映射
+        # First pass: build span_to_service mapping
         for file_type in ["normal_trace", "abnormal_trace"]:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
-            valid_rows = df.select(["span_id", "service_name"]).filter(
-                pl.col("span_id").is_not_null() & pl.col("service_name").is_not_null()
-            )
 
-            if valid_rows.height > 0:
-                for row in valid_rows.iter_rows(named=True):
-                    span_to_service[row["span_id"]] = row["service_name"]
-
-        # 提取边关系
-        for file_type in ["normal_trace", "abnormal_trace"]:
-            df = self._safe_read_parquet(data_files[file_type], file_type)
-            if df is None:
-                continue
-            valid_df = df.select(["parent_span_id", "service_name"]).filter(
-                pl.col("parent_span_id").is_not_null()
-                & pl.col("service_name").is_not_null()
-                & pl.col("parent_span_id").is_in(list(span_to_service.keys()))
-            )
-
-            if valid_df.height == 0:
-                continue
-
-            # 添加parent_service列
-            valid_df = valid_df.with_columns(
-                [
-                    pl.col("parent_span_id")
-                    .replace(span_to_service, default=None)
-                    .alias("parent_service")
-                ]
-            ).filter(
-                pl.col("parent_service").is_not_null()
-                & (pl.col("parent_service") != pl.col("service_name"))
-            )
-
-            # 过滤有效服务
-            valid_services = set(self.global_metadata.service2node_id.keys())
-            valid_df = valid_df.filter(
-                pl.col("parent_service").is_in(list(valid_services))
-                & pl.col("service_name").is_in(list(valid_services))
-            )
-
-            if valid_df.height > 0:
-                # 转换为node_id并提取边
-                edge_df = valid_df.with_columns(
-                    [
-                        pl.col("parent_service")
-                        .replace(self.global_metadata.service2node_id)
-                        .alias("parent_id"),
-                        pl.col("service_name")
-                        .replace(self.global_metadata.service2node_id)
-                        .alias("current_id"),
-                    ]
+            try:
+                valid_rows = df.select(["span_id", "service_name"]).filter(
+                    pl.col("span_id").is_not_null()
+                    & pl.col("service_name").is_not_null()
                 )
+                del df
 
-                for row in edge_df.iter_rows(named=True):
-                    edges.add((row["parent_id"], row["current_id"]))
+                if valid_rows.height > 0:
+                    for row in valid_rows.iter_rows(named=True):
+                        span_to_service[row["span_id"]] = row["service_name"]
+
+                del valid_rows
+
+            except Exception as e:
+                logger.warning(f"Error in first pass of {file_type}: {e}")
+                if "df" in locals():
+                    del df
+                gc.collect()
+                continue
+
+        # Second pass: extract edges
+        for file_type in ["normal_trace", "abnormal_trace"]:
+            df = self._safe_read_parquet(data_files[file_type], file_type)
+            if df is None:
+                continue
+
+            try:
+                valid_df = df.select(["parent_span_id", "service_name"]).filter(
+                    pl.col("parent_span_id").is_not_null()
+                    & pl.col("service_name").is_not_null()
+                    & pl.col("parent_span_id").is_in(list(span_to_service.keys()))
+                )
+                del df
+
+                if valid_df.height == 0:
+                    del valid_df
+                    continue
+
+                parent_mapped_df = valid_df.with_columns(
+                    [
+                        pl.col("parent_span_id")
+                        .replace(span_to_service, default=None)
+                        .alias("parent_service")
+                    ]
+                ).filter(
+                    pl.col("parent_service").is_not_null()
+                    & (pl.col("parent_service") != pl.col("service_name"))
+                )
+                del valid_df
+
+                valid_services = set(self.global_metadata.service2node_id.keys())
+                filtered_df = parent_mapped_df.filter(
+                    pl.col("parent_service").is_in(list(valid_services))
+                    & pl.col("service_name").is_in(list(valid_services))
+                )
+                del parent_mapped_df
+
+                if filtered_df.height > 0:
+                    edge_df = filtered_df.with_columns(
+                        [
+                            pl.col("parent_service")
+                            .replace(self.global_metadata.service2node_id)
+                            .alias("parent_id"),
+                            pl.col("service_name")
+                            .replace(self.global_metadata.service2node_id)
+                            .alias("current_id"),
+                        ]
+                    )
+                    del filtered_df
+
+                    for row in edge_df.iter_rows(named=True):
+                        edges.add((row["parent_id"], row["current_id"]))
+
+                    del edge_df
+
+            except Exception as e:
+                logger.warning(f"Error in second pass of {file_type}: {e}")
+                if "df" in locals():
+                    del df
+                gc.collect()
+                continue
 
         return edges
 
-    @timeit()
     def generate_fault_labels(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> List[int]:
@@ -501,6 +593,7 @@ class CaseProcessor:
 
         return labels
 
+    @timeit()
     def process_case(self, data_pack_path: Path) -> Dict:
         data_files = self.derive_filenames(data_pack_path)
         intervals = self.get_time_intervals(data_files)
@@ -516,9 +609,7 @@ class CaseProcessor:
 
         chunks = {}
         for i in range(len(intervals)):
-            chunk_id = (
-                f"{str(data_pack_path.resolve()).replace('/', '_')}_chunk_{i:06d}"
-            )
+            chunk_id = f"{data_pack_path.name}_chunk_{i:06d}"
             chunks[chunk_id] = {
                 "logs": logs_data[i],
                 "metrics": metrics_data[i],
@@ -544,12 +635,12 @@ class CaseProcessor:
     def _safe_read_parquet(
         self, file_path: Path, file_type: str
     ) -> Optional[pl.DataFrame]:
-        """安全读取parquet文件的辅助方法"""
         if not file_path.exists():
             return None
 
         try:
-            return pl.read_parquet(file_path)
+            df = pl.read_parquet(file_path)
+            return df
         except Exception as e:
             logger.warning(f"Error reading {file_type} from {file_path}: {e}")
             return None
@@ -570,81 +661,45 @@ class DatasetBuilder:
         self,
         data_packs: List[Path],
         output_dir: Path,
-        n_workers: Optional[int] = None,
         enable_checkpointing: bool = True,
     ):
-        """Build global metadata from all cases with checkpoint support"""
-
         if enable_checkpointing and self.load_checkpoint(output_dir):
             logger.info("Resumed global metadata from checkpoint")
             return
 
-        if n_workers is None:
-            n_workers = min(mp.cpu_count(), len(data_packs), 8)  # 限制最大线程数
+        logger.info(f"Collecting metadata from {len(data_packs)} cases...")
 
-        logger.info(
-            f"Collecting metadata from {len(data_packs)} cases using {n_workers} workers..."
-        )
-
-        chunk_size = 50
         all_log_messages = []
 
-        for i in range(0, len(data_packs), chunk_size):
-            batch_data_packs = data_packs[i : i + chunk_size]
+        for data_pack in tqdm(data_packs, desc="Collecting metadata"):
+            try:
+                metadata = collect_metadata_worker(data_pack, self.chunk_length)
+                self.global_metadata.update_from_case(metadata)
+                all_log_messages.extend(metadata["log_messages"])
 
-            with ThreadPoolExecutor(
-                max_workers=min(n_workers, len(batch_data_packs))
-            ) as executor:
-                futures = [
-                    executor.submit(
-                        collect_metadata_worker, data_pack, self.chunk_length
-                    )
-                    for data_pack in batch_data_packs
-                ]
+                if len(all_log_messages) > 200000:
+                    all_log_messages = random.sample(all_log_messages, 200000)
 
-                for future in tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=f"Collecting metadata batch {i // chunk_size + 1}",
-                ):
-                    try:
-                        metadata = future.result(timeout=300)  # 5分钟超时
-                        self.global_metadata.update_from_case(metadata)
-                        all_log_messages.extend(metadata["log_messages"])
-
-                        if len(all_log_messages) > 200000:
-                            all_log_messages = random.sample(all_log_messages, 200000)
-
-                    except Exception as e:
-                        logger.error(f"Error processing metadata: {e}")
+            except Exception as e:
+                logger.error(f"Error processing metadata: {e}")
 
         logger.info(
             f"Extracting log templates from {len(all_log_messages)} messages..."
         )
 
-        batch_size = max(1000, len(all_log_messages) // (n_workers * 2))
+        processed_messages = []
+        batch_size = 1000
         message_batches = [
             all_log_messages[i : i + batch_size]
             for i in range(0, len(all_log_messages), batch_size)
         ]
 
-        processed_messages = []
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            futures = [
-                executor.submit(process_log_templates_worker, batch)
-                for batch in message_batches
-            ]
-
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc="Processing log templates",
-            ):
-                try:
-                    batch_results = future.result(timeout=600)
-                    processed_messages.extend(batch_results)
-                except Exception as e:
-                    logger.error(f"Error processing log template batch: {e}")
+        for batch in tqdm(message_batches, desc="Processing log templates"):
+            try:
+                batch_results = process_log_templates_worker(batch)
+                processed_messages.extend(batch_results)
+            except Exception as e:
+                logger.error(f"Error processing log template batch: {e}")
 
         template_counts = Counter(processed_messages)
         top_templates = [template for template, _ in template_counts.most_common(100)]
@@ -662,15 +717,12 @@ class DatasetBuilder:
         del all_log_messages
         del processed_messages
 
-    def process_cases_parallel(
+    def process_cases(
         self,
         data_packs: List[Path],
         output_dir: Path,
-        n_workers: Optional[int] = None,
         enable_checkpointing: bool = True,
     ) -> Dict:
-        if n_workers is None:
-            n_workers = min(mp.cpu_count(), len(data_packs), 8)
         all_chunks = {}
         all_edges = set()
 
@@ -691,50 +743,36 @@ class DatasetBuilder:
             self.global_metadata.all_edges.update(all_edges)
             return all_chunks
 
-        logger.info(f"Processing {len(data_packs)} cases using {n_workers} workers...")
+        logger.info(f"Processing {len(data_packs)} cases serially...")
 
         metadata_dict = self.global_metadata.to_dict()
 
-        # 批量处理以减少内存压力
-        batch_size = 20  # 每批处理20个案例
+        for data_pack in tqdm(data_packs, desc="Processing cases"):
+            try:
+                result = process_case_worker(
+                    data_pack, self.chunk_length, metadata_dict
+                )
+                if result is None:
+                    logger.warning("Worker returned None result")
+                    continue
 
-        for i in range(0, len(data_packs), batch_size):
-            batch_data_packs = data_packs[i : i + batch_size]
+                all_chunks.update(result["chunks"])
+                all_edges.update(result["edges"])
 
-            with ThreadPoolExecutor(
-                max_workers=min(n_workers, len(batch_data_packs))
-            ) as executor:
-                futures = [
-                    executor.submit(
-                        process_case_worker, data_pack, self.chunk_length, metadata_dict
+                if enable_checkpointing:
+                    case_name = (
+                        list(result["chunks"].keys())[0].split("_chunk_")[0]
+                        if result["chunks"]
+                        else "unknown"
                     )
-                    for data_pack in batch_data_packs
-                ]
+                    self.save_intermediate_result(
+                        case_name, result["chunks"], result["edges"], output_dir
+                    )
 
-                for future in tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=f"Processing batch {i // batch_size + 1}/{(len(data_packs) + batch_size - 1) // batch_size}",
-                ):
-                    try:
-                        result = future.result(timeout=600)
-                        all_chunks.update(result["chunks"])
-                        all_edges.update(result["edges"])
+            except Exception as e:
+                logger.error(f"Error processing case: {e}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
 
-                        if enable_checkpointing:
-                            case_name = (
-                                list(result["chunks"].keys())[0].split("_chunk_")[0]
-                                if result["chunks"]
-                                else "unknown"
-                            )
-                            self.save_intermediate_result(
-                                case_name, result["chunks"], result["edges"], output_dir
-                            )
-
-                    except Exception as e:
-                        logger.error(f"Error processing case: {e}")
-
-            # 每批次后保存检查点
             if enable_checkpointing:
                 self.save_checkpoint(output_dir)
 
@@ -836,7 +874,6 @@ class DatasetBuilder:
         logger.info(f"Saved checkpoint to {checkpoint_file}")
 
     def load_checkpoint(self, output_dir: Path) -> bool:
-        """加载检查点状态"""
         checkpoint_file = output_dir / "checkpoint.json"
         if not checkpoint_file.exists():
             return False
@@ -903,15 +940,9 @@ class DatasetBuilder:
         self.global_metadata.all_edges.update(all_edges)
         self.save_dataset(all_chunks, output_dir, train_ratio)
 
-        # 清理中间文件（可选）
-        # self.cleanup_intermediate_files(output_dir)
-
     def cleanup_intermediate_files(self, output_dir: Path) -> None:
-        """清理中间文件"""
         intermediate_dir = output_dir / "intermediate"
         if intermediate_dir.exists():
-            import shutil
-
             shutil.rmtree(intermediate_dir)
             logger.info("Cleaned up intermediate files")
 
@@ -964,6 +995,8 @@ def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
             "abnormal_metric",
             "normal_trace",
             "abnormal_trace",
+            "abnormal_metric_sum",
+            "normal_metric_sum",
         ]
 
         for file_type in file_types:
@@ -975,18 +1008,20 @@ def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
                 df = pl.read_parquet(file_path)
 
                 if "service_name" in df.columns:
-                    service_names = (
-                        df.select("service_name")
-                        .filter(pl.col("service_name").is_not_null())
-                        .to_series()
-                        .unique()
-                        .to_list()
+                    service_df = df.select("service_name").filter(
+                        pl.col("service_name").is_not_null()
                     )
+                    service_names = service_df.to_series().unique().to_list()
                     services.update(service_names)
+                    del service_df
 
                 if "metric" in df.columns:
-                    metric_names = df.select("metric").to_series().unique().to_list()
+                    metric_df = df.select("metric")
+                    metric_names = metric_df.to_series().unique().to_list()
                     metrics.update(metric_names)
+                    del metric_df
+
+                del df
 
             except Exception as e:
                 logger.warning(
@@ -994,7 +1029,6 @@ def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
                 )
                 continue
 
-        # 处理日志消息
         for file_type in ["normal_log", "abnormal_log"]:
             file_path = data_files[file_type]
             if not file_path.exists():
@@ -1003,16 +1037,15 @@ def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
             try:
                 df = pl.read_parquet(file_path)
                 if "message" in df.columns:
-                    messages = (
-                        df.select("message")
-                        .filter(
-                            pl.col("message").is_not_null()
-                            & (pl.col("message").cast(pl.Utf8).str.strip_chars() != "")
-                        )
-                        .to_series()
-                        .to_list()
+                    message_df = df.select("message").filter(
+                        pl.col("message").is_not_null()
+                        & (pl.col("message").cast(pl.Utf8).str.strip_chars() != "")
                     )
+                    messages = message_df.to_series().to_list()
                     log_messages.extend(messages)
+                    del message_df
+
+                del df
 
             except Exception as e:
                 logger.warning(
@@ -1020,7 +1053,7 @@ def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
                 )
                 continue
 
-        case_name = data_pack_path.name  # 使用简化的名称
+        case_name = data_pack_path.name
         return {
             "case_name": case_name,
             "services": services,
@@ -1035,12 +1068,16 @@ def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
             "metrics": set(),
             "log_messages": [],
         }
+    finally:
+        gc.collect()
 
 
 def process_case_worker(
     data_pack_path: Path, chunk_length: int, metadata_dict: Dict
 ) -> Dict:
     try:
+        logger.info(f"Starting processing case: {data_pack_path.name}")
+
         global_metadata = GlobalMetadata()
         global_metadata.service2node_id = metadata_dict["service2node_id"]
         global_metadata.node_id2service = metadata_dict["node_id2service"]
@@ -1049,9 +1086,19 @@ def process_case_worker(
         global_metadata.template2id = metadata_dict["template2id"]
 
         processor = CaseProcessor(chunk_length, global_metadata)
-        return processor.process_case(data_pack_path)
+        result = processor.process_case(data_pack_path)
+
+        logger.info(
+            f"Completed processing case: {data_pack_path.name}, chunks: {len(result.get('chunks', {}))}"
+        )
+        return result
+
+    except KeyboardInterrupt:
+        logger.warning(f"KeyboardInterrupt in worker processing {data_pack_path.name}")
+        raise
     except Exception as e:
         logger.error(f"Error in worker processing {data_pack_path.name}: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return {"chunks": {}, "edges": set()}
 
 
@@ -1061,51 +1108,69 @@ def create_dataset(
     max_cases: Optional[int] = None,
     chunk_length: int = 10,
     train_ratio: float = 0.7,
-    n_workers: Optional[int] = None,
     enable_checkpointing: bool = True,
     resume_from_checkpoint: bool = True,
 ) -> int:
-    config = Configuration(host="http://10.10.10.220:32080")
-    with ApiClient(configuration=config) as client:
-        api = InjectionApi(api_client=client)
-        resp = api.api_v1_injections_analysis_with_issues_get()
+    try:
+        logger.info("Starting dataset creation...")
 
-    assert resp.data is not None, "No cases found in the response"
-    case_names = list(
-        set([item.injection_name for item in resp.data if item.injection_name])
-    )[:max_cases]
-    data_packs = [Path(data_root) / name / "converted" for name in case_names]
+        config = Configuration(host="http://10.10.10.220:32080")
+        with ApiClient(configuration=config) as client:
+            api = InjectionApi(api_client=client)
+            resp = api.api_v1_injections_analysis_with_issues_get()
 
-    builder = DatasetBuilder(chunk_length=chunk_length)
+        assert resp.data is not None, "No cases found in the response"
+        case_names = list(
+            set([item.injection_name for item in resp.data if item.injection_name])
+        )[:max_cases]
+        data_packs = [Path(data_root) / name for name in case_names]
 
-    output_path = Path(output_dir)
-    if resume_from_checkpoint and enable_checkpointing:
-        if builder.load_checkpoint(output_path):
-            logger.info("Resuming from checkpoint...")
+        logger.info(f"Found {len(data_packs)} data packs to process")
 
-            all_chunks, all_edges, processed_cases = builder.load_intermediate_results(
-                output_path
-            )
+        builder = DatasetBuilder(chunk_length=chunk_length)
 
-            if len(processed_cases) == len(data_packs):
-                logger.info("All cases already processed! Merging final results...")
-                builder.merge_intermediate_results(output_path, train_ratio)
-                return len(all_chunks)
+        output_path = Path(output_dir)
+        if resume_from_checkpoint and enable_checkpointing:
+            if builder.load_checkpoint(output_path):
+                logger.info("Resuming from checkpoint...")
 
-            logger.info(
-                f"Found {len(processed_cases)} processed cases, continuing from where we left off..."
-            )
-        else:
-            logger.info("No checkpoint found, starting fresh...")
+                all_chunks, all_edges, processed_cases = (
+                    builder.load_intermediate_results(output_path)
+                )
 
-    builder.build_global_metadata(
-        data_packs, Path(output_dir), n_workers, enable_checkpointing
-    )
+                if len(processed_cases) == len(data_packs):
+                    logger.info("All cases already processed! Merging final results...")
+                    builder.merge_intermediate_results(output_path, train_ratio)
+                    return len(all_chunks)
 
-    all_chunks = builder.process_cases_parallel(
-        data_packs, Path(output_dir), n_workers, enable_checkpointing
-    )
+                logger.info(
+                    f"Found {len(processed_cases)} processed cases, continuing from where we left off..."
+                )
+            else:
+                logger.info("No checkpoint found, starting fresh...")
 
-    builder.save_dataset(all_chunks, Path(output_dir), train_ratio)
+        logger.info("Building global metadata...")
+        builder.build_global_metadata(
+            data_packs, Path(output_dir), enable_checkpointing
+        )
 
-    return len(all_chunks)
+        logger.info("Processing cases serially...")
+        all_chunks = builder.process_cases(
+            data_packs, Path(output_dir), enable_checkpointing
+        )
+
+        logger.info("Saving final dataset...")
+        builder.save_dataset(all_chunks, Path(output_dir), train_ratio)
+
+        logger.info(
+            f"Dataset creation completed successfully. Total chunks: {len(all_chunks)}"
+        )
+        return len(all_chunks)
+
+    except KeyboardInterrupt:
+        logger.warning("Dataset creation interrupted by user")
+        raise
+    except Exception as e:
+        logger.error(f"Fatal error in dataset creation: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise

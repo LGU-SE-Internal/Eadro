@@ -188,9 +188,9 @@ class BaseModel(nn.Module):
             batch_cnt, epoch_loss = 0, 0.0
             epoch_time_start = time.time()
 
-            for graph, label in train_loader:
+            for graph, groundtruth in train_loader:
                 optimizer.zero_grad()
-                result = self.model.forward(graph.to(self.device), label)
+                result = self.model.forward(graph.to(self.device), groundtruth)
                 loss = result["loss"]
                 loss.backward()
 
