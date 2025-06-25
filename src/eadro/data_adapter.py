@@ -106,7 +106,7 @@ class DrainProcessor:
 
 class CaseProcessor:
     def __init__(
-        self, chunk_length: int, global_metadata: GlobalMetadata, dataset: str
+        self, chunk_length: int, global_metadata: GlobalMetadata, dataset: Dataset
     ):
         self.dataset = dataset
         self.chunk_length = chunk_length
@@ -118,7 +118,7 @@ class CaseProcessor:
 
         original_df = df
         try:
-            if self.dataset == "rcabench":
+            if self.dataset == Dataset.RCABENCH:
                 time_dtype = df.select(pl.col("time")).dtypes[0]
                 if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
                     "String"
@@ -151,7 +151,7 @@ class CaseProcessor:
                 del df
             if (
                 self.dataset == Dataset.EADRO_SOCIAL_NETWORK
-                or self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+                or self.dataset == Dataset.EADRO_TRAIN_TICKET
             ):
                 time_dtype = df.select(pl.col("time")).dtypes[0]
                 if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
@@ -213,10 +213,10 @@ class CaseProcessor:
         }
 
     def get_time_intervals(
-        self, data_files: Dict[str, Path], dataset: str
+        self, data_files: Dict[str, Path]
     ) -> List[Tuple[datetime, datetime]]:
         intervals = []
-        if dataset == "rcabench":
+        if self.dataset == Dataset.RCABENCH:
             with open(data_files["env"]) as f:
                 env_data = json.load(f)
 
@@ -236,7 +236,7 @@ class CaseProcessor:
                 current_time = window_end
         if (
             self.dataset == Dataset.EADRO_SOCIAL_NETWORK
-            or self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+            or self.dataset == Dataset.EADRO_TRAIN_TICKET
         ):
             with open(data_files["eadro_fault_info"]) as f:
                 fault_info = json.load(f)
@@ -612,10 +612,10 @@ class CaseProcessor:
         return edges
 
     def generate_fault_labels(
-        self, data_files: Dict[str, Path], intervals: List[Tuple], dataset: str
+        self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> List[int]:
         labels = []
-        if dataset == "rcabench":
+        if self.dataset == Dataset.RCABENCH:
             with open(data_files["injection"]) as f:
                 injection_data = json.load(f)
 
@@ -652,8 +652,8 @@ class CaseProcessor:
                 else:
                     labels.append(-1)
         if (
-            dataset == Dataset.EADRO_SOCIAL_NETWORK
-            or dataset == Dataset.EADRO_SOCIAL_NETWORK
+            self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+            or self.dataset == Dataset.EADRO_TRAIN_TICKET
         ):
             with open(data_files["eadro_fault_info"]) as f:
                 fault_info = json.load(f)
@@ -685,9 +685,9 @@ class CaseProcessor:
         return labels
 
     @timeit()
-    def process_case(self, data_pack_path: Path, dataset: str) -> Dict:
+    def process_case(self, data_pack_path: Path) -> Dict:
         data_files = self.derive_filenames(data_pack_path)
-        intervals = self.get_time_intervals(data_files, dataset=dataset)
+        intervals = self.get_time_intervals(data_files)
 
         if not intervals:
             return {}
@@ -696,7 +696,7 @@ class CaseProcessor:
         metrics_data = self.process_metrics(data_files, intervals)
         traces_data = self.process_traces(data_files, intervals)
         edges = self.extract_service_graph(data_files)
-        labels = self.generate_fault_labels(data_files, intervals, dataset=dataset)
+        labels = self.generate_fault_labels(data_files, intervals)
 
         chunks = {}
         for i in range(len(intervals)):
@@ -766,9 +766,8 @@ class DatasetBuilder:
                 self.global_metadata.update_from_case(metadata)
                 all_log_messages.extend(metadata["log_messages"])
 
-                # Limit message count to prevent memory issues
-                if len(all_log_messages) > 500000:
-                    all_log_messages = random.sample(all_log_messages, 500000)
+                if len(all_log_messages) > 1000000:
+                    all_log_messages = random.sample(all_log_messages, 1000000)
 
             except Exception as e:
                 logger.error(f"Error processing metadata: {e}")
@@ -777,11 +776,9 @@ class DatasetBuilder:
             f"Extracting log templates from {len(all_log_messages)} messages..."
         )
 
-        # Direct template processing instead of using worker function
         processed_messages = []
         batch_size = 1000
 
-        # Initialize drain processor once
         persistence = FilePersistence("data/drain_templates")
         miner_config = TemplateMinerConfig()
         miner_config.load("drain.ini")
@@ -827,7 +824,7 @@ class DatasetBuilder:
         data_packs: List[Path],
         output_dir: Path,
         enable_checkpointing: bool,
-        dataset: str,
+        dataset: Dataset,
     ) -> Dict:
         all_chunks = {}
         all_edges = set()
@@ -853,13 +850,13 @@ class DatasetBuilder:
                 processor = CaseProcessor(
                     self.chunk_length, self.global_metadata, dataset=dataset
                 )
-                result = processor.process_case(data_pack, dataset=dataset)
+                result = processor.process_case(data_pack)
 
                 logger.info(
                     f"Completed processing case: {data_pack.name}, chunks: {len(result.get('chunks', {}))}"
                 )
 
-                if result is None:
+                if result is None or "chunks" not in result or "edges" not in result:
                     logger.warning("Case processing returned None result")
                     continue
 
@@ -1144,14 +1141,14 @@ def create_dataset(
 
         if (
             dataset == Dataset.EADRO_SOCIAL_NETWORK
-            or dataset == Dataset.EADRO_SOCIAL_NETWORK
+            or dataset == Dataset.EADRO_TRAIN_TICKET
         ):
             if dataset == Dataset.EADRO_SOCIAL_NETWORK:
                 pa = Path("/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset")
             if dataset == Dataset.EADRO_TRAIN_TICKET:
                 pa = Path("/mnt/jfs/rcabench-platform-v2/data/Eadro/TT_Dataset")
             data_packs = [p for p in pa.iterdir() if p.is_dir()]
-        else:
+        if dataset == Dataset.RCABENCH:
             config = Configuration(host="http://10.10.10.220:32080")
             with ApiClient(configuration=config) as client:
                 api = InjectionApi(api_client=client)

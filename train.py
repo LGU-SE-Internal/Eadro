@@ -173,8 +173,17 @@ def main(
     gpu: bool = typer.Option(True, help="Use GPU"),
     epochs: int = typer.Option(500, help="Training epochs"),
     batch_size: int = typer.Option(256, help="Batch size"),
-    lr: float = typer.Option(0.001, help="Learning rate"),
+    lr: float = typer.Option(0.05, help="Learning rate"),
     patience: int = typer.Option(10, help="Early stopping patience"),
+    lr_scheduler: str = typer.Option(
+        "none", help="Learning rate scheduler: none, step, exponential, cosine, plateau"
+    ),
+    lr_step_size: int = typer.Option(50, help="Step size for StepLR scheduler"),
+    lr_gamma: float = typer.Option(0.1, help="Multiplicative factor for LR decay"),
+    lr_warmup_epochs: int = typer.Option(0, help="Number of warmup epochs"),
+    lr_min: float = typer.Option(
+        1e-5, help="Minimum learning rate for cosine scheduler"
+    ),
     self_attn: bool = typer.Option(True, help="Use self attention"),
     fuse_dim: int = typer.Option(128, help="Fusion dimension"),
     alpha: float = typer.Option(0.5, help="Loss combination weight"),
@@ -204,6 +213,11 @@ def main(
         "batch_size": batch_size,
         "lr": lr,
         "patience": patience,
+        "lr_scheduler": lr_scheduler,
+        "lr_step_size": lr_step_size,
+        "lr_gamma": lr_gamma,
+        "lr_warmup_epochs": lr_warmup_epochs,
+        "lr_min": lr_min,
         "self_attn": self_attn,
         "fuse_dim": fuse_dim,
         "alpha": alpha,

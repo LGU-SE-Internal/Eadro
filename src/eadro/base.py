@@ -29,6 +29,11 @@ class BaseModel(nn.Module):
         hash_id: Optional[str] = None,
         use_wandb: bool = False,
         wandb_project: str = "eadro-training",
+        lr_scheduler: str = "none",
+        lr_step_size: int = 50,
+        lr_gamma: float = 0.1,
+        lr_warmup_epochs: int = 0,
+        lr_min: float = 1e-6,
         **kwargs: Any,
     ) -> None:
         """
@@ -46,6 +51,11 @@ class BaseModel(nn.Module):
             hash_id: Experiment hash ID
             use_wandb: Whether to use wandb for logging
             wandb_project: Wandb project name
+            lr_scheduler: Type of learning rate scheduler ("none", "step", "exponential", "cosine", "plateau")
+            lr_step_size: Step size for StepLR scheduler
+            lr_gamma: Multiplicative factor for learning rate decay
+            lr_warmup_epochs: Number of warmup epochs
+            lr_min: Minimum learning rate for cosine scheduler
         """
         super(BaseModel, self).__init__()
 
@@ -54,6 +64,13 @@ class BaseModel(nn.Module):
         self.patience = patience  # > 0: use early stop
         self.device = device
         self.use_wandb = use_wandb
+
+        # Learning rate scheduler parameters
+        self.lr_scheduler_type = lr_scheduler.lower()
+        self.lr_step_size = lr_step_size
+        self.lr_gamma = lr_gamma
+        self.lr_warmup_epochs = lr_warmup_epochs
+        self.lr_min = lr_min
 
         # Initialize wandb if requested
         if self.use_wandb:
@@ -78,6 +95,53 @@ class BaseModel(nn.Module):
         )
         self.model = MainModel(event_num, metric_num, node_num, device, **kwargs)
         self.model.to(device)
+
+    def _create_lr_scheduler(self, optimizer) -> Optional[Any]:
+        """
+        Create learning rate scheduler based on configuration
+
+        Args:
+            optimizer: The optimizer to attach scheduler to
+
+        Returns:
+            Learning rate scheduler or None if no scheduler is used
+        """
+        if self.lr_scheduler_type == "none":
+            return None
+        elif self.lr_scheduler_type == "step":
+            return torch.optim.lr_scheduler.StepLR(
+                optimizer, step_size=self.lr_step_size, gamma=self.lr_gamma
+            )
+        elif self.lr_scheduler_type == "exponential":
+            return torch.optim.lr_scheduler.ExponentialLR(
+                optimizer, gamma=self.lr_gamma
+            )
+        elif self.lr_scheduler_type == "cosine":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=self.epochs
+            )
+        elif self.lr_scheduler_type == "plateau":
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=self.lr_gamma, patience=5
+            )
+        else:
+            logging.warning(
+                f"Unknown scheduler type: {self.lr_scheduler_type}, using no scheduler"
+            )
+            return None
+
+    def _warmup_lr(self, optimizer, epoch: int) -> None:
+        """
+        Apply learning rate warmup
+
+        Args:
+            optimizer: The optimizer to modify
+            epoch: Current epoch (1-indexed)
+        """
+        if self.lr_warmup_epochs > 0 and epoch <= self.lr_warmup_epochs:
+            warmup_lr = self.lr * (epoch / self.lr_warmup_epochs)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = warmup_lr
 
     def evaluate(
         self, test_loader: Any, datatype: str = "Test", log_to_wandb: bool = True
@@ -179,6 +243,9 @@ class BaseModel(nn.Module):
         optimizer = Adam(self.model.parameters(), lr=self.lr)
         # optimizer = torch.optim.SGD(self.model.parameters(), lr=self.lr, momentum=0.99)
 
+        # Create learning rate scheduler
+        lr_scheduler = self._create_lr_scheduler(optimizer)
+
         train_losses = []
         train_metrics_history = []
         test_metrics_history = []
@@ -187,6 +254,9 @@ class BaseModel(nn.Module):
             self.model.train()
             batch_cnt, epoch_loss = 0, 0.0
             epoch_time_start = time.time()
+
+            # Apply learning rate warmup
+            self._warmup_lr(optimizer, epoch)
 
             for graph, groundtruth in train_loader:
                 optimizer.zero_grad()
@@ -198,9 +268,22 @@ class BaseModel(nn.Module):
                 epoch_loss += loss.item()
                 batch_cnt += 1
 
+            # Step scheduler after warmup period (except for ReduceLROnPlateau)
+            if (
+                lr_scheduler is not None
+                and epoch > self.lr_warmup_epochs
+                and not isinstance(
+                    lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+                )
+            ):
+                lr_scheduler.step()
+
             epoch_time_elapsed = time.time() - epoch_time_start
             avg_epoch_loss = epoch_loss / batch_cnt
             train_losses.append(avg_epoch_loss)
+
+            # Get current learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
 
             train_metrics = None
             if epoch % 5 == 0 or epoch == 1:
@@ -212,8 +295,8 @@ class BaseModel(nn.Module):
                 )
 
             logging.info(
-                "Epoch {}/{}, training loss: {:.5f} [{:.2f}s]".format(
-                    epoch, self.epochs, avg_epoch_loss, epoch_time_elapsed
+                "Epoch {}/{}, training loss: {:.5f}, lr: {:.6f} [{:.2f}s]".format(
+                    epoch, self.epochs, avg_epoch_loss, current_lr, epoch_time_elapsed
                 )
             )
 
@@ -221,6 +304,7 @@ class BaseModel(nn.Module):
                 wandb_data = {
                     "epoch": epoch,
                     "train_loss": avg_epoch_loss,
+                    "learning_rate": current_lr,
                     "epoch_time": epoch_time_elapsed,
                     "worse_count": worse_count,
                 }
@@ -246,6 +330,13 @@ class BaseModel(nn.Module):
                 test_metrics_history.append(
                     {"epoch": epoch, "metrics": test_results.copy()}
                 )
+
+                # Step ReduceLROnPlateau scheduler based on test loss
+                if lr_scheduler is not None and isinstance(
+                    lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+                ):
+                    # For ReduceLROnPlateau, we use the average epoch loss as the metric
+                    lr_scheduler.step(avg_epoch_loss)
 
                 if test_results["HR@1"] > best_hr1:
                     best_hr1, eval_res, coverage = (

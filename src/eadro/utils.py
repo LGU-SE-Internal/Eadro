@@ -62,9 +62,7 @@ def dump_scores(result_dir, hash_id, scores, converge):
         fw.write(
             hash_id
             + ": "
-            + (datetime.datetime.now() + timedelta(hours=8)).strftime(
-                "%Y/%m/%d-%H:%M:%S"
-            )
+            + (datetime.now() + timedelta(hours=8)).strftime("%Y/%m/%d-%H:%M:%S")
             + "\n"
         )
         fw.write(
@@ -181,9 +179,9 @@ def timeit(*, log_level: str = "DEBUG", log_args: bool | set[str] = True):
 
             sys.stdout.flush()
 
-            start = datetime.datetime.now()
+            start = datetime.now()
             result = func(*args, **kwargs)
-            end = datetime.datetime.now()
+            end = datetime.now()
 
             duration = end - start
             duration_message = f"duration={duration.total_seconds():.6f}s"
