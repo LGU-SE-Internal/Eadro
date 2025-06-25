@@ -46,7 +46,7 @@ def main(
             max_cases=max_cases,
             chunk_length=chunk_length,
             train_ratio=train_ratio,
-            dataset=dataset,
+            ds=dataset,
         )
 
         console.print(f"[green]Total chunks created: {total_chunks}[/green]")

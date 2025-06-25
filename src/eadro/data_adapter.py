@@ -9,7 +9,6 @@ import gc
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Set
 from collections import Counter
-
 import numpy as np
 import polars as pl
 from tqdm import tqdm
@@ -18,8 +17,7 @@ from drain3 import TemplateMiner
 from drain3.file_persistence import FilePersistence
 from drain3.template_miner_config import TemplateMinerConfig
 from rcabench.openapi import InjectionApi, ApiClient, Configuration
-
-from .utils import CacheManager, timeit
+from .utils import CacheManager, timeit, Dataset
 
 
 class GlobalMetadata:
@@ -107,7 +105,10 @@ class DrainProcessor:
 
 
 class CaseProcessor:
-    def __init__(self, chunk_length: int, global_metadata: GlobalMetadata):
+    def __init__(
+        self, chunk_length: int, global_metadata: GlobalMetadata, dataset: str
+    ):
+        self.dataset = dataset
         self.chunk_length = chunk_length
         self.global_metadata = global_metadata
 
@@ -115,34 +116,64 @@ class CaseProcessor:
         if "time" not in df.columns:
             return df
 
-        original_df = df  # Keep reference to original df
+        original_df = df
         try:
-            time_dtype = df.select(pl.col("time")).dtypes[0]
-            if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
-                "String"
-            ):
-                result = df.with_columns(
-                    [pl.col("time").str.to_datetime().dt.offset_by("8h").alias("time")]
-                )
-            elif (
-                "datetime" in str(time_dtype).lower()
-                or "timestamp" in str(time_dtype).lower()
-            ):
-                result = df.with_columns(
-                    [pl.col("time").dt.offset_by("8h").alias("time")]
-                )
-            else:
-                result = df.with_columns(
-                    [pl.col("time").cast(pl.Datetime).dt.offset_by("8h").alias("time")]
-                )
+            if self.dataset == "rcabench":
+                time_dtype = df.select(pl.col("time")).dtypes[0]
+                if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
+                    "String"
+                ):
+                    result = df.with_columns(
+                        [
+                            pl.col("time")
+                            .str.to_datetime()
+                            .dt.offset_by("8h")
+                            .alias("time")
+                        ]
+                    )
+                elif (
+                    "datetime" in str(time_dtype).lower()
+                    or "timestamp" in str(time_dtype).lower()
+                ):
+                    result = df.with_columns(
+                        [pl.col("time").dt.offset_by("8h").alias("time")]
+                    )
+                else:
+                    result = df.with_columns(
+                        [
+                            pl.col("time")
+                            .cast(pl.Datetime)
+                            .dt.offset_by("8h")
+                            .alias("time")
+                        ]
+                    )
 
-            # Clean up original df and return result
-            del df
-            gc.collect()
+                del df
+            if (
+                self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+                or self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+            ):
+                time_dtype = df.select(pl.col("time")).dtypes[0]
+                if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
+                    "String"
+                ):
+                    result = df.with_columns(
+                        [pl.col("time").str.to_datetime().alias("time")]
+                    )
+                elif (
+                    "datetime" in str(time_dtype).lower()
+                    or "timestamp" in str(time_dtype).lower()
+                ):
+                    result = df.with_columns([pl.col("time").alias("time")])
+                else:
+                    result = df.with_columns(
+                        [pl.col("time").cast(pl.Datetime).alias("time")]
+                    )
+
+                del df
             return result
         except Exception as e:
             logger.warning(f"Error processing time column: {e}")
-            # Return original df if processing failed
             return original_df
 
     def _assign_chunk_indices(
@@ -160,7 +191,8 @@ class CaseProcessor:
             pl.col("chunk_idx").is_not_null()
         )
 
-    def derive_filenames(self, data_pack: Path) -> Dict[str, Path]:
+    @staticmethod
+    def derive_filenames(data_pack: Path) -> Dict[str, Path]:
         return {
             "abnormal_log": data_pack / "converted" / "abnormal_logs.parquet",
             "normal_log": data_pack / "converted" / "normal_logs.parquet",
@@ -202,12 +234,27 @@ class CaseProcessor:
                 window_end = current_time + window_duration
                 intervals.append((current_time, min(window_end, end_time)))
                 current_time = window_end
-        if dataset == "eadro":
+        if (
+            self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+            or self.dataset == Dataset.EADRO_SOCIAL_NETWORK
+        ):
             with open(data_files["eadro_fault_info"]) as f:
                 fault_info = json.load(f)
 
-            start_time = datetime.fromisoformat(fault_info["start_time"])
-            end_time = datetime.fromisoformat(fault_info["end_time"])
+            if (
+                "fault_start_time" in fault_info
+                and fault_info["fault_start_time"] != ""
+            ):
+                start_time = datetime.fromisoformat(fault_info["fault_start_time"])
+            if "fault_end_time" in fault_info and fault_info["fault_end_time"] != "":
+                end_time = datetime.fromisoformat(fault_info["fault_end_time"])
+            if (
+                "normal_start_time" in fault_info
+                and fault_info["normal_start_time"] != ""
+            ):
+                start_time = datetime.fromisoformat(fault_info["normal_start_time"])
+            if "normal_end_time" in fault_info and fault_info["normal_end_time"] != "":
+                end_time = datetime.fromisoformat(fault_info["normal_end_time"])
 
             current_time = start_time
             window_duration = timedelta(minutes=2)
@@ -225,7 +272,7 @@ class CaseProcessor:
         event_num = len(self.global_metadata.log_templates) + 1
         result = np.zeros((len(intervals), node_num, event_num))
 
-        for file_type in ["normal_log", "abnormal_log"]:
+        for file_type in ["normal_log", "abnormal_log", "eadro_log"]:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
@@ -233,20 +280,17 @@ class CaseProcessor:
             try:
                 df = self._process_time_column(df)
 
-                # 预处理：过滤有效服务
                 filtered_df = df.filter(
                     pl.col("service_name").is_in(
                         list(self.global_metadata.service2node_id.keys())
                     )
                 )
-                del df  # 立即释放原始df
-                gc.collect()
+                del df
 
                 if filtered_df.height == 0:
                     del filtered_df
                     continue
 
-                # 映射service到node_id和message到template_id
                 mapped_df = filtered_df.with_columns(
                     [
                         pl.col("service_name")
@@ -258,10 +302,8 @@ class CaseProcessor:
                         .alias("message_str"),
                     ]
                 ).filter(pl.col("node_id") != -1)
-                del filtered_df  # 立即释放过滤后的df
-                gc.collect()
+                del filtered_df
 
-                # 映射template_id
                 template_mapped_df = mapped_df.with_columns(
                     [
                         pl.col("message_str")
@@ -269,28 +311,22 @@ class CaseProcessor:
                         .alias("template_id")
                     ]
                 )
-                del mapped_df  # 立即释放映射后的df
-                gc.collect()
+                del mapped_df
 
-                # 为每个时间段分配chunk_idx
                 chunk_assigned_df = self._assign_chunk_indices(
                     template_mapped_df, intervals
                 )
-                del template_mapped_df  # 立即释放模板映射后的df
-                gc.collect()
+                del template_mapped_df
 
                 if chunk_assigned_df.height == 0:
                     del chunk_assigned_df
                     continue
 
-                # 使用groupby进行向量化计数
                 counts = chunk_assigned_df.group_by(
                     ["chunk_idx", "node_id", "template_id"]
                 ).len()
-                del chunk_assigned_df  # 立即释放chunk分配后的df
-                gc.collect()
+                del chunk_assigned_df
 
-                # 批量更新结果矩阵
                 for row in counts.iter_rows(named=True):
                     chunk_idx = row["chunk_idx"]
                     node_id = row["node_id"]
@@ -298,7 +334,7 @@ class CaseProcessor:
                     count = row["len"]
                     result[chunk_idx, node_id, template_id] += count
 
-                del counts  # 立即释放计数结果
+                del counts
                 gc.collect()
 
             except Exception as e:
@@ -320,6 +356,7 @@ class CaseProcessor:
             "abnormal_metric",
             "normal_metric_sum",
             "abnormal_metric_sum",
+            "eadro_metric",
         ]:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
@@ -332,8 +369,19 @@ class CaseProcessor:
                     [
                         pl.coalesce(
                             [
-                                pl.col("attr.k8s.deployment.name"),
-                                pl.col("attr.k8s.replicaset.name"),
+                                col
+                                for col in [
+                                    pl.col("service_name")
+                                    if "service_name" in df.columns
+                                    else None,
+                                    pl.col("attr.k8s.deployment.name")
+                                    if "attr.k8s.deployment.name" in df.columns
+                                    else None,
+                                    pl.col("attr.k8s.replicaset.name")
+                                    if "attr.k8s.replicaset.name" in df.columns
+                                    else None,
+                                ]
+                                if col is not None
                             ]
                         ).alias("service_name")
                     ]
@@ -367,7 +415,6 @@ class CaseProcessor:
                     ]
                 ).filter((pl.col("node_id") != -1) & (pl.col("metric_id") != -1))
                 del filtered_df
-                gc.collect()
 
                 chunk_assigned_df = self._assign_chunk_indices(mapped_df, intervals)
                 del mapped_df
@@ -403,7 +450,7 @@ class CaseProcessor:
         service_mapping = self.global_metadata.service2node_id
         valid_services = list(service_mapping.keys())
 
-        for file_type in ["normal_trace", "abnormal_trace"]:
+        for file_type in ["normal_trace", "abnormal_trace", "eadro_trace"]:
             try:
                 df = self._safe_read_parquet(data_files[file_type], file_type)
                 if df is None:
@@ -479,8 +526,7 @@ class CaseProcessor:
         edges = set()
         span_to_service = {}
 
-        # First pass: build span_to_service mapping
-        for file_type in ["normal_trace", "abnormal_trace"]:
+        for file_type in ["normal_trace", "abnormal_trace", "eadro_trace"]:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
@@ -502,8 +548,7 @@ class CaseProcessor:
                 logger.warning(f"Error in first pass of {file_type}: {e}")
                 continue
 
-        # Second pass: extract edges
-        for file_type in ["normal_trace", "abnormal_trace"]:
+        for file_type in ["normal_trace", "abnormal_trace", "eadro_trace"]:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
@@ -606,12 +651,37 @@ class CaseProcessor:
                     labels.append(self.global_metadata.service2node_id.get(service, -1))
                 else:
                     labels.append(-1)
-        if dataset == "eadro":
+        if (
+            dataset == Dataset.EADRO_SOCIAL_NETWORK
+            or dataset == Dataset.EADRO_SOCIAL_NETWORK
+        ):
             with open(data_files["eadro_fault_info"]) as f:
                 fault_info = json.load(f)
             service = fault_info.get("injection_name", "")
-            if service == "":
-                raise ValueError("No fault service found in EADRO fault info")
+            if (
+                "fault_start_time" in fault_info
+                and fault_info["fault_start_time"] != ""
+            ):
+                start_time = datetime.fromisoformat(fault_info["fault_start_time"])
+            if "fault_end_time" in fault_info and fault_info["fault_end_time"] != "":
+                end_time = datetime.fromisoformat(fault_info["fault_end_time"])
+            if (
+                "normal_start_time" in fault_info
+                and fault_info["normal_start_time"] != ""
+            ):
+                start_time = datetime.fromisoformat(fault_info["normal_start_time"])
+            if "normal_end_time" in fault_info and fault_info["normal_end_time"] != "":
+                end_time = datetime.fromisoformat(fault_info["normal_end_time"])
+
+            for st, et in intervals:
+                if start_time < et and end_time > st and service != "":
+                    if service not in self.global_metadata.service2node_id:
+                        logger.warning(
+                            f"Service {service} not found in global metadata, using -1"
+                        )
+                    labels.append(self.global_metadata.service2node_id.get(service, -1))
+                else:
+                    labels.append(-1)
         return labels
 
     @timeit()
@@ -764,9 +834,7 @@ class DatasetBuilder:
 
         if enable_checkpointing:
             all_chunks, all_edges, _ = self.load_intermediate_results(output_dir)
-
             remaining_data_packs = self.get_remaining_cases(data_packs, output_dir)
-
             if len(remaining_data_packs) < len(data_packs):
                 logger.info(
                     f"Resume from checkpoint: {len(data_packs) - len(remaining_data_packs)} cases already processed"
@@ -780,24 +848,11 @@ class DatasetBuilder:
             return all_chunks
 
         logger.info(f"Processing {len(data_packs)} cases serially...")
-
-        metadata_dict = self.global_metadata.to_dict()
-
         for data_pack in tqdm(data_packs, desc="Processing cases"):
             try:
-                # Inline case processing instead of using worker function
-                logger.info(f"Starting processing case: {data_pack.name}")
-
-                # Create global metadata for this case
-                case_global_metadata = GlobalMetadata()
-                case_global_metadata.service2node_id = metadata_dict["service2node_id"]
-                case_global_metadata.node_id2service = metadata_dict["node_id2service"]
-                case_global_metadata.log_templates = metadata_dict["log_templates"]
-                case_global_metadata.metric_names = metadata_dict["metric_names"]
-                case_global_metadata.template2id = metadata_dict["template2id"]
-
-                # Process case directly
-                processor = CaseProcessor(self.chunk_length, case_global_metadata)
+                processor = CaseProcessor(
+                    self.chunk_length, self.global_metadata, dataset=dataset
+                )
                 result = processor.process_case(data_pack, dataset=dataset)
 
                 logger.info(
@@ -1003,37 +1058,19 @@ class DatasetBuilder:
             logger.info("Cleaned up checkpoint file")
 
     def _collect_case_metadata(self, data_pack_path: Path) -> Dict:
-        """Collect metadata from a single case - inlined version of collect_metadata_worker"""
         try:
-            case_processor = CaseProcessor(self.chunk_length, GlobalMetadata())
-            data_files = case_processor.derive_filenames(data_pack_path)
+            data_files = CaseProcessor.derive_filenames(data_pack_path)
 
             services = set()
             metrics = set()
             log_messages = []
 
-            file_types = [
-                "normal_log",
-                "abnormal_log",
-                "normal_metric",
-                "abnormal_metric",
-                "normal_trace",
-                "abnormal_trace",
-                "abnormal_metric_sum",
-                "normal_metric_sum",
-                "eadro_metric",
-                "eadro_trace",
-                "eadro_log",
-                "eadro_fault_info",
-            ]
-
-            for file_type in file_types:
-                file_path = data_files[file_type]
+            for file_type, file_path in data_files.items():
                 if not file_path.exists():
                     continue
 
                 try:
-                    if file_type.endswith(".json"):
+                    if file_path.suffix != ".parquet":
                         continue
 
                     df = pl.read_parquet(file_path)
@@ -1092,14 +1129,28 @@ def create_dataset(
     chunk_length: int = 10,
     train_ratio: float = 0.7,
     enable_checkpointing: bool = True,
-    dataset="rcabench",
+    ds: str = "rcabench",
 ) -> int:
+    if ds == "rcabench":
+        dataset = Dataset.RCABENCH
+    elif ds == "sn":
+        dataset = Dataset.EADRO_SOCIAL_NETWORK
+    elif ds == "tt":
+        dataset = Dataset.EADRO_TRAIN_TICKET
+
     try:
         logger.info("Starting dataset creation...")
+        output_path = Path(output_dir) / ds
 
-        if dataset == "eadro":
-            sn = Path("/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset")
-            data_packs = [p for p in sn.iterdir() if p.is_dir()]
+        if (
+            dataset == Dataset.EADRO_SOCIAL_NETWORK
+            or dataset == Dataset.EADRO_SOCIAL_NETWORK
+        ):
+            if dataset == Dataset.EADRO_SOCIAL_NETWORK:
+                pa = Path("/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset")
+            if dataset == Dataset.EADRO_TRAIN_TICKET:
+                pa = Path("/mnt/jfs/rcabench-platform-v2/data/Eadro/TT_Dataset")
+            data_packs = [p for p in pa.iterdir() if p.is_dir()]
         else:
             config = Configuration(host="http://10.10.10.220:32080")
             with ApiClient(configuration=config) as client:
@@ -1117,7 +1168,6 @@ def create_dataset(
 
         builder = DatasetBuilder(chunk_length=chunk_length)
 
-        output_path = Path(output_dir) / dataset
         if enable_checkpointing:
             if builder.load_checkpoint(output_path):
                 logger.info("Resuming from checkpoint...")
@@ -1138,17 +1188,15 @@ def create_dataset(
                 logger.info("No checkpoint found, starting fresh...")
 
         logger.info("Building global metadata...")
-        builder.build_global_metadata(
-            data_packs, Path(output_dir), enable_checkpointing
-        )
+        builder.build_global_metadata(data_packs, output_path, enable_checkpointing)
 
         logger.info("Processing cases serially...")
         all_chunks = builder.process_cases(
-            data_packs, Path(output_dir), enable_checkpointing, dataset=dataset
+            data_packs, output_path, enable_checkpointing, dataset=dataset
         )
 
         logger.info("Saving final dataset...")
-        builder.save_dataset(all_chunks, Path(output_dir), train_ratio)
+        builder.save_dataset(all_chunks, output_path, train_ratio)
 
         logger.info(
             f"Dataset creation completed successfully. Total chunks: {len(all_chunks)}"

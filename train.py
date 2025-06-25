@@ -190,6 +190,7 @@ def main(
     activation: float = typer.Option(0.2, help="LeakyReLU negative slope"),
     result_dir: str = typer.Option("result/", help="Result directory"),
     chunks_dir: str = typer.Option("dataset_output", help="Chunks directory"),
+    dataset: str = typer.Option("rcabench", help="Dataset name"),
     use_wandb: bool = typer.Option(True, help="Use Weights & Biases for logging"),
     wandb_project: str = typer.Option("eadro-training", help="W&B project name"),
     config_file: Optional[str] = typer.Option(
@@ -217,7 +218,7 @@ def main(
         "attn_head": attn_head,
         "activation": activation,
         "result_dir": result_dir,
-        "chunks_dir": chunks_dir,
+        "chunks_dir": chunks_dir + "/" + dataset,
         "use_wandb": use_wandb,
         "wandb_project": wandb_project,
     }

@@ -10,13 +10,18 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Generic, Optional, TypeVar
 from pathlib import Path
 import threading
-import pickle
-import logging
 from functools import wraps
 from pprint import pformat
-import datetime
 import inspect
 import sys
+from enum import Enum, auto
+
+
+class Dataset(Enum):
+    EADRO_SOCIAL_NETWORK = auto()
+    EADRO_TRAIN_TICKET = auto()
+    RCABENCH = auto()
+
 
 T = TypeVar("T")
 

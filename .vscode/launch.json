@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "create_dataset.py",
             "console": "integratedTerminal",
-            "args": "--max-cases 5"
+            "args": "--max-cases --dataset tt"
         }
     ]
 }
