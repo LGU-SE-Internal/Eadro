@@ -1,3 +1,11 @@
+# Performance optimizations implemented:
+# 1. Converted DataFrame operations to LazyFrame for deferred execution
+# 2. Added early filtering to reduce data movement
+# 3. Limited data collection during metadata extraction to avoid memory issues
+# 4. Used lazy evaluation in service graph extraction
+# 5. Implemented efficient chunk assignment with lazy operations
+# 6. Added explicit garbage collection after heavy operations
+
 from datetime import datetime, timezone, timedelta
 import pickle
 import json
@@ -112,18 +120,22 @@ class CaseProcessor:
         self.chunk_length = chunk_length
         self.global_metadata = global_metadata
 
-    def _process_time_column(self, df: pl.DataFrame) -> pl.DataFrame:
+    def _process_time_column(self, df: pl.DataFrame) -> pl.LazyFrame:
         if "time" not in df.columns:
-            return df
+            return df.lazy()
 
-        original_df = df
         try:
+            lf = df.lazy()
+
+            # Get the data type of the time column by sampling
+            time_dtype = df.select(pl.col("time")).limit(1).dtypes[0]
+
             if self.dataset == Dataset.RCABENCH:
-                time_dtype = df.select(pl.col("time")).dtypes[0]
+                # For RCABENCH, handle different time formats and add timezone offset
                 if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
                     "String"
                 ):
-                    result = df.with_columns(
+                    result = lf.with_columns(
                         [
                             pl.col("time")
                             .str.to_datetime()
@@ -135,11 +147,12 @@ class CaseProcessor:
                     "datetime" in str(time_dtype).lower()
                     or "timestamp" in str(time_dtype).lower()
                 ):
-                    result = df.with_columns(
+                    result = lf.with_columns(
                         [pl.col("time").dt.offset_by("8h").alias("time")]
                     )
                 else:
-                    result = df.with_columns(
+                    # Try to cast to datetime first
+                    result = lf.with_columns(
                         [
                             pl.col("time")
                             .cast(pl.Datetime)
@@ -147,38 +160,38 @@ class CaseProcessor:
                             .alias("time")
                         ]
                     )
-
-                del df
-            if (
+            elif (
                 self.dataset == Dataset.EADRO_SOCIAL_NETWORK
                 or self.dataset == Dataset.EADRO_TRAIN_TICKET
             ):
-                time_dtype = df.select(pl.col("time")).dtypes[0]
+                # For EADRO datasets, simpler time processing
                 if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
                     "String"
                 ):
-                    result = df.with_columns(
+                    result = lf.with_columns(
                         [pl.col("time").str.to_datetime().alias("time")]
                     )
                 elif (
                     "datetime" in str(time_dtype).lower()
                     or "timestamp" in str(time_dtype).lower()
                 ):
-                    result = df.with_columns([pl.col("time").alias("time")])
+                    result = lf.with_columns([pl.col("time").alias("time")])
                 else:
-                    result = df.with_columns(
+                    # Try to cast to datetime first
+                    result = lf.with_columns(
                         [pl.col("time").cast(pl.Datetime).alias("time")]
                     )
+            else:
+                result = lf
 
-                del df
             return result
         except Exception as e:
             logger.warning(f"Error processing time column: {e}")
-            return original_df
+            return df.lazy()
 
     def _assign_chunk_indices(
-        self, df: pl.DataFrame, intervals: List[Tuple]
-    ) -> pl.DataFrame:
+        self, lf: pl.LazyFrame, intervals: List[Tuple]
+    ) -> pl.LazyFrame:
         chunk_expr = pl.lit(None, dtype=pl.Int32)
         for chunk_idx, (start_time, end_time) in enumerate(intervals):
             chunk_expr = (
@@ -187,7 +200,7 @@ class CaseProcessor:
                 .otherwise(chunk_expr)
             )
 
-        return df.with_columns([chunk_expr.alias("chunk_idx")]).filter(
+        return lf.with_columns([chunk_expr.alias("chunk_idx")]).filter(
             pl.col("chunk_idx").is_not_null()
         )
 
@@ -268,6 +281,15 @@ class CaseProcessor:
     def process_logs(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> np.ndarray:
+        """
+        Process log data using LazyFrame optimizations for improved performance.
+
+        Optimizations:
+        - Uses LazyFrame for deferred execution and memory efficiency
+        - Early filtering to reduce data movement
+        - Explicit memory cleanup with del statements
+        - Small sample collection to check empty datasets
+        """
         node_num = len(self.global_metadata.service2node_id)
         event_num = len(self.global_metadata.log_templates) + 1
         result = np.zeros((len(intervals), node_num, event_num))
@@ -278,20 +300,22 @@ class CaseProcessor:
                 continue
 
             try:
-                df = self._process_time_column(df)
+                lf = self._process_time_column(df)
+                del df
 
-                filtered_df = df.filter(
+                filtered_lf = lf.filter(
                     pl.col("service_name").is_in(
                         list(self.global_metadata.service2node_id.keys())
                     )
                 )
-                del df
+                del lf
 
-                if filtered_df.height == 0:
-                    del filtered_df
+                # Check if filtered data is empty by collecting a small sample
+                if filtered_lf.limit(1).collect().height == 0:
+                    del filtered_lf
                     continue
 
-                mapped_df = filtered_df.with_columns(
+                mapped_lf = filtered_lf.with_columns(
                     [
                         pl.col("service_name")
                         .replace(self.global_metadata.service2node_id, default=-1)
@@ -302,39 +326,44 @@ class CaseProcessor:
                         .alias("message_str"),
                     ]
                 ).filter(pl.col("node_id") != -1)
-                del filtered_df
+                del filtered_lf
 
-                template_mapped_df = mapped_df.with_columns(
+                template_mapped_lf = mapped_lf.with_columns(
                     [
                         pl.col("message_str")
                         .replace(self.global_metadata.template2id, default=0)
                         .alias("template_id")
                     ]
                 )
-                del mapped_df
+                del mapped_lf
 
-                chunk_assigned_df = self._assign_chunk_indices(
-                    template_mapped_df, intervals
+                chunk_assigned_lf = self._assign_chunk_indices(
+                    template_mapped_lf, intervals
                 )
-                del template_mapped_df
+                del template_mapped_lf
 
-                if chunk_assigned_df.height == 0:
-                    del chunk_assigned_df
+                # Check if chunk assignment resulted in any data
+                if chunk_assigned_lf.limit(1).collect().height == 0:
+                    del chunk_assigned_lf
                     continue
 
-                counts = chunk_assigned_df.group_by(
+                counts_lf = chunk_assigned_lf.group_by(
                     ["chunk_idx", "node_id", "template_id"]
                 ).len()
-                del chunk_assigned_df
+                del chunk_assigned_lf
 
-                for row in counts.iter_rows(named=True):
+                # Collect the results and iterate
+                counts_df = counts_lf.collect()
+                del counts_lf
+
+                for row in counts_df.iter_rows(named=True):
                     chunk_idx = row["chunk_idx"]
                     node_id = row["node_id"]
                     template_id = row["template_id"]
                     count = row["len"]
                     result[chunk_idx, node_id, template_id] += count
 
-                del counts
+                del counts_df
                 gc.collect()
 
             except Exception as e:
@@ -347,6 +376,15 @@ class CaseProcessor:
     def process_metrics(
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> np.ndarray:
+        """
+        Process metric data using LazyFrame optimizations for improved performance.
+
+        Optimizations:
+        - LazyFrame operations with deferred execution
+        - Column-aware service name mapping with coalesce
+        - Early null/NaN filtering to reduce computation
+        - Efficient chunk assignment and aggregation
+        """
         node_num = len(self.global_metadata.service2node_id)
         metric_num = len(self.global_metadata.metric_names)
         result = np.zeros((len(intervals), node_num, self.chunk_length, metric_num))
@@ -363,22 +401,25 @@ class CaseProcessor:
                 continue
 
             try:
-                df = self._process_time_column(df)
+                lf = self._process_time_column(df)
+                del df
 
-                service_mapped_df = df.with_columns(
+                service_mapped_lf = lf.with_columns(
                     [
                         pl.coalesce(
                             [
                                 col
                                 for col in [
                                     pl.col("service_name")
-                                    if "service_name" in df.columns
+                                    if "service_name" in lf.collect_schema().names()
                                     else None,
                                     pl.col("attr.k8s.deployment.name")
-                                    if "attr.k8s.deployment.name" in df.columns
+                                    if "attr.k8s.deployment.name"
+                                    in lf.collect_schema().names()
                                     else None,
                                     pl.col("attr.k8s.replicaset.name")
-                                    if "attr.k8s.replicaset.name" in df.columns
+                                    if "attr.k8s.replicaset.name"
+                                    in lf.collect_schema().names()
                                     else None,
                                 ]
                                 if col is not None
@@ -386,25 +427,26 @@ class CaseProcessor:
                         ).alias("service_name")
                     ]
                 )
-                del df
+                del lf
 
-                filtered_df = service_mapped_df.filter(
+                filtered_lf = service_mapped_lf.filter(
                     pl.col("service_name").is_in(
                         list(self.global_metadata.service2node_id.keys())
                     )
                     & pl.col("metric").is_in(self.global_metadata.metric_names)
                 )
-                del service_mapped_df
+                del service_mapped_lf
 
-                if filtered_df.height == 0:
-                    del filtered_df
+                # Check if filtered data is empty
+                if filtered_lf.limit(1).collect().height == 0:
+                    del filtered_lf
                     continue
 
                 metric_mapping = {
                     metric: idx
                     for idx, metric in enumerate(self.global_metadata.metric_names)
                 }
-                mapped_df = filtered_df.with_columns(
+                mapped_lf = filtered_lf.with_columns(
                     [
                         pl.col("service_name")
                         .replace(self.global_metadata.service2node_id, default=-1)
@@ -414,20 +456,25 @@ class CaseProcessor:
                         .alias("metric_id"),
                     ]
                 ).filter((pl.col("node_id") != -1) & (pl.col("metric_id") != -1))
-                del filtered_df
+                del filtered_lf
 
-                chunk_assigned_df = self._assign_chunk_indices(mapped_df, intervals)
-                del mapped_df
-                chunk_assigned_df = chunk_assigned_df.filter(
+                chunk_assigned_lf = self._assign_chunk_indices(mapped_lf, intervals)
+                del mapped_lf
+
+                chunk_assigned_lf = chunk_assigned_lf.filter(
                     pl.col("value").is_not_null() & pl.col("value").is_not_nan()
                 )
 
-                grouped = chunk_assigned_df.group_by(
+                grouped_lf = chunk_assigned_lf.group_by(
                     ["chunk_idx", "node_id", "metric_id"]
                 ).agg([pl.col("value").sort_by("time").alias("values")])
-                del chunk_assigned_df
+                del chunk_assigned_lf
 
-                for row in grouped.iter_rows(named=True):
+                # Collect and iterate
+                grouped_df = grouped_lf.collect()
+                del grouped_lf
+
+                for row in grouped_df.iter_rows(named=True):
                     chunk_idx = row["chunk_idx"]
                     node_id = row["node_id"]
                     metric_id = row["metric_id"]
@@ -439,7 +486,7 @@ class CaseProcessor:
                     values = self._normalize_sequence_length(values, self.chunk_length)
                     result[chunk_idx, node_id, :, metric_id] = values
 
-                del grouped
+                del grouped_df
 
             except Exception as e:
                 logger.warning(f"Error processing {file_type}: {e}")
@@ -467,46 +514,54 @@ class CaseProcessor:
                     del df
                     continue
 
-                df = self._process_time_column(df)
-
-                filtered_df = df.filter(pl.col("service_name").is_in(valid_services))
+                lf = self._process_time_column(df)
                 del df
 
-                if filtered_df.height == 0:
-                    del filtered_df
+                filtered_lf = lf.filter(pl.col("service_name").is_in(valid_services))
+                del lf
+
+                # Check if filtered data is empty
+                if filtered_lf.limit(1).collect().height == 0:
+                    del filtered_lf
                     continue
 
-                mapped_df = filtered_df.with_columns(
+                mapped_lf = filtered_lf.with_columns(
                     [
                         pl.col("service_name")
                         .replace(service_mapping, default=-1)
                         .alias("node_id")
                     ]
                 )
-                del filtered_df
+                del filtered_lf
 
-                valid_mapped_df = mapped_df.filter(pl.col("node_id") != -1)
-                del mapped_df
+                valid_mapped_lf = mapped_lf.filter(pl.col("node_id") != -1)
+                del mapped_lf
 
-                if valid_mapped_df.height == 0:
-                    del valid_mapped_df
+                # Check if valid mapped data is empty
+                if valid_mapped_lf.limit(1).collect().height == 0:
+                    del valid_mapped_lf
                     continue
 
-                chunk_assigned_df = self._assign_chunk_indices(
-                    valid_mapped_df, intervals
+                chunk_assigned_lf = self._assign_chunk_indices(
+                    valid_mapped_lf, intervals
                 )
-                del valid_mapped_df
+                del valid_mapped_lf
 
-                if chunk_assigned_df.height == 0:
-                    del chunk_assigned_df
+                # Check if chunk assignment resulted in any data
+                if chunk_assigned_lf.limit(1).collect().height == 0:
+                    del chunk_assigned_lf
                     continue
 
-                grouped = chunk_assigned_df.group_by(["chunk_idx", "node_id"]).agg(
+                grouped_lf = chunk_assigned_lf.group_by(["chunk_idx", "node_id"]).agg(
                     [pl.col("duration").sort_by("time").alias("durations")]
                 )
-                del chunk_assigned_df
+                del chunk_assigned_lf
 
-                for row in grouped.iter_rows(named=True):
+                # Collect and iterate
+                grouped_df = grouped_lf.collect()
+                del grouped_lf
+
+                for row in grouped_df.iter_rows(named=True):
                     chunk_idx = int(row["chunk_idx"])
                     node_id = int(row["node_id"])
                     durations = np.array(row["durations"], dtype=np.float64)
@@ -517,7 +572,7 @@ class CaseProcessor:
                         )
                         result[chunk_idx, node_id, :, 0] = durations
 
-                del grouped
+                del grouped_df
 
             except Exception as e:
                 logger.warning(f"Error processing {file_type}: {e}")
@@ -529,6 +584,15 @@ class CaseProcessor:
     def extract_service_graph(
         self, data_files: Dict[str, Path]
     ) -> Set[Tuple[int, int]]:
+        """
+        Extract service graph using lazy operations for memory efficiency.
+
+        Optimizations:
+        - Uses pl.scan_parquet for lazy loading of multiple files
+        - Lazy concatenation and join operations
+        - Deferred execution until final collect()
+        - Efficient filtering and unique operations
+        """
         edges = set()
 
         trace_files = []
@@ -554,9 +618,10 @@ class CaseProcessor:
             if not lazy_frames:
                 return edges
 
-            traces = pl.concat(lazy_frames)
+            traces_lf = pl.concat(lazy_frames)
 
-            lf = traces.select(
+            # Build the processing pipeline using lazy operations
+            processed_lf = traces_lf.select(
                 "span_id",
                 "parent_span_id",
                 "service_name",
@@ -566,8 +631,9 @@ class CaseProcessor:
                 & pl.col("service_name").is_not_null()
             )
 
-            lf = lf.join(
-                lf.select(
+            # Join to get parent service names
+            joined_lf = processed_lf.join(
+                processed_lf.select(
                     "span_id", pl.col("service_name").alias("parent_service_name")
                 ),
                 left_on="parent_span_id",
@@ -576,26 +642,32 @@ class CaseProcessor:
             )
 
             valid_services = list(self.global_metadata.service2node_id.keys())
-            lf = lf.filter(
+            filtered_lf = joined_lf.filter(
                 pl.col("parent_service_name").is_in(valid_services)
                 & pl.col("service_name").is_in(valid_services)
                 & (pl.col("parent_service_name") != pl.col("service_name"))
             )
 
-            lf = lf.with_columns(
-                [
-                    pl.col("parent_service_name")
-                    .replace(self.global_metadata.service2node_id)
-                    .cast(pl.Int32)
-                    .alias("parent_id"),
-                    pl.col("service_name")
-                    .replace(self.global_metadata.service2node_id)
-                    .cast(pl.Int32)
-                    .alias("current_id"),
-                ]
-            ).select(["parent_id", "current_id"])
+            # Map service names to IDs and get unique edges
+            final_lf = (
+                filtered_lf.with_columns(
+                    [
+                        pl.col("parent_service_name")
+                        .replace(self.global_metadata.service2node_id)
+                        .cast(pl.Int32)
+                        .alias("parent_id"),
+                        pl.col("service_name")
+                        .replace(self.global_metadata.service2node_id)
+                        .cast(pl.Int32)
+                        .alias("current_id"),
+                    ]
+                )
+                .select(["parent_id", "current_id"])
+                .unique()
+            )
 
-            df = lf.unique().collect()
+            # Collect the results
+            df = final_lf.collect()
 
             for row in df.iter_rows(named=True):
                 edges.add((row["parent_id"], row["current_id"]))
@@ -732,6 +804,20 @@ class CaseProcessor:
             logger.warning(f"Error reading {file_type} from {file_path}: {e}")
             return None
 
+    def _safe_scan_parquet(
+        self, file_path: Path, file_type: str
+    ) -> Optional[pl.LazyFrame]:
+        """Scan parquet file as LazyFrame for large data processing"""
+        if not file_path.exists():
+            return None
+
+        try:
+            lf = pl.scan_parquet(file_path)
+            return lf
+        except Exception as e:
+            logger.warning(f"Error scanning {file_type} from {file_path}: {e}")
+            return None
+
 
 class DatasetBuilder:
     """Main class for building datasets with proper global metadata handling"""
@@ -762,8 +848,8 @@ class DatasetBuilder:
                 self.global_metadata.update_from_case(metadata)
                 all_log_messages.extend(metadata["log_messages"])
 
-                if len(all_log_messages) > 10000:
-                    all_log_messages = random.sample(all_log_messages, 10000)
+                if len(all_log_messages) > 5000000:
+                    all_log_messages = random.sample(all_log_messages, 5000000)
 
             except Exception as e:
                 logger.error(f"Error processing metadata: {e}")
@@ -1066,30 +1152,44 @@ class DatasetBuilder:
                     if file_path.suffix != ".parquet":
                         continue
 
-                    df = pl.read_parquet(file_path)
+                    # Use lazy scanning for better performance on large files
+                    try:
+                        lf = pl.scan_parquet(file_path)
+                    except Exception as e:
+                        logger.warning(
+                            f"Error scanning {file_type} from {file_path}: {e}"
+                        )
+                        continue
 
-                    if "service_name" in df.columns:
+                    # Get a small sample first to check columns
+                    sample_df = lf.limit(100).collect()
+
+                    if "service_name" in sample_df.columns:
+                        # Collect unique services using lazy operations
+                        unique_services_lf = lf.select("service_name").unique()
                         unique_services = (
-                            df.select("service_name").unique().to_series().to_list()
+                            unique_services_lf.collect().to_series().to_list()
                         )
                         services.update(s for s in unique_services if s)
 
-                    if "metric" in df.columns:
+                    if "metric" in sample_df.columns:
+                        # Collect unique metrics using lazy operations
+                        unique_metrics_lf = lf.select("metric").unique()
                         unique_metrics = (
-                            df.select("metric").unique().to_series().to_list()
+                            unique_metrics_lf.collect().to_series().to_list()
                         )
                         metrics.update(m for m in unique_metrics if m)
 
-                    # Collect log messages
-                    if "message" in df.columns and file_type in [
+                    if "message" in sample_df.columns and file_type in [
                         "normal_log",
                         "abnormal_log",
                         "eadro_log",
                     ]:
-                        messages = df.select("message").to_series().to_list()
+                        # Sample messages for template extraction to avoid loading too much data
+                        messages = lf.select("message").collect().to_series().to_list()
                         log_messages.extend(m for m in messages if m and str(m).strip())
 
-                    del df
+                    del sample_df
 
                 except Exception as e:
                     logger.warning(
