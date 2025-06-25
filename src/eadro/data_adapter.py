@@ -418,6 +418,9 @@ class CaseProcessor:
 
                 chunk_assigned_df = self._assign_chunk_indices(mapped_df, intervals)
                 del mapped_df
+                chunk_assigned_df = chunk_assigned_df.filter(
+                    pl.col("value").is_not_null() & pl.col("value").is_not_nan()
+                )
 
                 grouped = chunk_assigned_df.group_by(
                     ["chunk_idx", "node_id", "metric_id"]
@@ -429,6 +432,9 @@ class CaseProcessor:
                     node_id = row["node_id"]
                     metric_id = row["metric_id"]
                     values = np.array(row["values"])
+                    assert len(values[~np.isnan(values)]) != 0, (
+                        "Values cannot be all NaN"
+                    )
 
                     values = self._normalize_sequence_length(values, self.chunk_length)
                     result[chunk_idx, node_id, :, metric_id] = values
@@ -756,8 +762,8 @@ class DatasetBuilder:
                 self.global_metadata.update_from_case(metadata)
                 all_log_messages.extend(metadata["log_messages"])
 
-                if len(all_log_messages) > 1000000:
-                    all_log_messages = random.sample(all_log_messages, 1000000)
+                if len(all_log_messages) > 10000:
+                    all_log_messages = random.sample(all_log_messages, 10000)
 
             except Exception as e:
                 logger.error(f"Error processing metadata: {e}")
