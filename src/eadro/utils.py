@@ -6,6 +6,7 @@ import hashlib
 import random
 import numpy as np
 import torch
+import resource
 from datetime import datetime, timedelta
 from typing import Any, Callable, Generic, Optional, TypeVar
 from pathlib import Path
@@ -179,13 +180,21 @@ def timeit(*, log_level: str = "DEBUG", log_args: bool | set[str] = True):
 
             sys.stdout.flush()
 
+            # Get initial memory usage
+            initial_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
             start = datetime.now()
             result = func(*args, **kwargs)
             end = datetime.now()
 
+            # Get peak memory usage
+            maxrss_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            maxrss_mib = maxrss_kib / 1024
+
             duration = end - start
             duration_message = f"duration={duration.total_seconds():.6f}s"
-            print(f"exit  {func_name} {duration_message}")
+            memory_message = f"peak_memory={maxrss_mib:.3f}MiB"
+            print(f"exit  {func_name} {duration_message} {memory_message}")
             sys.stdout.flush()
 
             return result

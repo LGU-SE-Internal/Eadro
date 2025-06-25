@@ -524,90 +524,80 @@ class CaseProcessor:
         self, data_files: Dict[str, Path]
     ) -> Set[Tuple[int, int]]:
         edges = set()
-        span_to_service = {}
 
+        trace_files = []
         for file_type in ["normal_trace", "abnormal_trace", "eadro_trace"]:
-            df = self._safe_read_parquet(data_files[file_type], file_type)
-            if df is None:
-                continue
+            file_path = data_files[file_type]
+            if file_path.exists():
+                trace_files.append(file_path)
 
-            try:
-                valid_rows = df.select(["span_id", "service_name"]).filter(
-                    pl.col("span_id").is_not_null()
-                    & pl.col("service_name").is_not_null()
-                )
-                del df
+        if not trace_files:
+            logger.warning("No trace files found for service graph extraction")
+            return edges
 
-                if valid_rows.height > 0:
-                    for row in valid_rows.iter_rows(named=True):
-                        span_to_service[row["span_id"]] = row["service_name"]
-
-                del valid_rows
-
-            except Exception as e:
-                logger.warning(f"Error in first pass of {file_type}: {e}")
-                continue
-
-        for file_type in ["normal_trace", "abnormal_trace", "eadro_trace"]:
-            df = self._safe_read_parquet(data_files[file_type], file_type)
-            if df is None:
-                continue
-
-            try:
-                valid_df = df.select(["parent_span_id", "service_name"]).filter(
-                    pl.col("parent_span_id").is_not_null()
-                    & pl.col("service_name").is_not_null()
-                    & pl.col("parent_span_id").is_in(list(span_to_service.keys()))
-                )
-                del df
-
-                if valid_df.height == 0:
-                    del valid_df
+        try:
+            lazy_frames = []
+            for file_path in trace_files:
+                try:
+                    lf = pl.scan_parquet(file_path)
+                    lazy_frames.append(lf)
+                except Exception as e:
+                    logger.warning(f"Error scanning {file_path}: {e}")
                     continue
 
-                parent_mapped_df = valid_df.with_columns(
-                    [
-                        pl.col("parent_span_id")
-                        .replace(span_to_service, default=None)
-                        .alias("parent_service")
-                    ]
-                ).filter(
-                    pl.col("parent_service").is_not_null()
-                    & (pl.col("parent_service") != pl.col("service_name"))
-                )
-                del valid_df
+            if not lazy_frames:
+                return edges
 
-                valid_services = set(self.global_metadata.service2node_id.keys())
-                filtered_df = parent_mapped_df.filter(
-                    pl.col("parent_service").is_in(list(valid_services))
-                    & pl.col("service_name").is_in(list(valid_services))
-                )
-                del parent_mapped_df
+            traces = pl.concat(lazy_frames)
 
-                if filtered_df.height > 0:
-                    edge_df = filtered_df.with_columns(
-                        [
-                            pl.col("parent_service")
-                            .replace(self.global_metadata.service2node_id)
-                            .cast(pl.Int32)
-                            .alias("parent_id"),
-                            pl.col("service_name")
-                            .replace(self.global_metadata.service2node_id)
-                            .cast(pl.Int32)
-                            .alias("current_id"),
-                        ]
-                    )
-                    del filtered_df
+            lf = traces.select(
+                "span_id",
+                "parent_span_id",
+                "service_name",
+            ).filter(
+                pl.col("span_id").is_not_null()
+                & pl.col("parent_span_id").is_not_null()
+                & pl.col("service_name").is_not_null()
+            )
 
-                    for row in edge_df.iter_rows(named=True):
-                        edges.add((row["parent_id"], row["current_id"]))
+            lf = lf.join(
+                lf.select(
+                    "span_id", pl.col("service_name").alias("parent_service_name")
+                ),
+                left_on="parent_span_id",
+                right_on="span_id",
+                how="inner",
+            )
 
-                    del edge_df
+            valid_services = list(self.global_metadata.service2node_id.keys())
+            lf = lf.filter(
+                pl.col("parent_service_name").is_in(valid_services)
+                & pl.col("service_name").is_in(valid_services)
+                & (pl.col("parent_service_name") != pl.col("service_name"))
+            )
 
-            except Exception as e:
-                logger.warning(f"Error in second pass of {file_type}: {e}")
-                gc.collect()
-                continue
+            lf = lf.with_columns(
+                [
+                    pl.col("parent_service_name")
+                    .replace(self.global_metadata.service2node_id)
+                    .cast(pl.Int32)
+                    .alias("parent_id"),
+                    pl.col("service_name")
+                    .replace(self.global_metadata.service2node_id)
+                    .cast(pl.Int32)
+                    .alias("current_id"),
+                ]
+            ).select(["parent_id", "current_id"])
+
+            df = lf.unique().collect()
+
+            for row in df.iter_rows(named=True):
+                edges.add((row["parent_id"], row["current_id"]))
+
+            logger.info(f"Extracted {len(edges)} unique service graph edges")
+
+        except Exception as e:
+            logger.error(f"Error in service graph extraction: {e}")
 
         return edges
 

@@ -24,6 +24,7 @@ dependencies = [
     "polars>=1.31.0",
     "wandb>=0.20.1",
     "ipykernel>=6.29.5",
+    "pympler>=1.1",
 ]
 [tool.uv.sources]
 dgl = { url = "https://data.dgl.ai/wheels/torch-2.4/dgl-2.4.0-cp312-cp312-manylinux1_x86_64.whl" }
