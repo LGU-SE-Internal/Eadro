@@ -153,7 +153,7 @@ def train_model(config: Config, evaluation_epoch: int = 10) -> tuple:
     )
 
     model = BaseModel(
-        device=device,
+        device=str(device),
         **config.to_dict(),
     )
 

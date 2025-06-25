@@ -28,6 +28,12 @@ def main(
     train_ratio: float = typer.Option(
         0.9, "--train-ratio", help="Ratio of training data", min=0.0, max=1.0
     ),
+    dataset: str = typer.Option(
+        "rcabench",
+        "--dataset",
+        help="Name of the dataset to create (default: rcabench)",
+        show_default=True,
+    ),
 ) -> None:
     if not Path(data_root).exists():
         rprint(f"[red]Error: Data root directory '{data_root}' does not exist[/red]")
@@ -40,6 +46,7 @@ def main(
             max_cases=max_cases,
             chunk_length=chunk_length,
             train_ratio=train_ratio,
+            dataset=dataset,
         )
 
         console.print(f"[green]Total chunks created: {total_chunks}[/green]")

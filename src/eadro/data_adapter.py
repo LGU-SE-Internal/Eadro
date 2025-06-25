@@ -56,14 +56,13 @@ class GlobalMetadata:
         self.template2id["UNSEEN"] = 0
 
     def to_dict(self) -> Dict:
-        """Convert to dictionary for serialization"""
         return {
             "service2node_id": self.service2node_id,
             "node_id2service": self.node_id2service,
             "log_templates": self.log_templates,
             "metric_names": self.metric_names,
             "template2id": self.template2id,
-            "edges": list(self.all_edges),
+            "edges": [[int(edge[0]), int(edge[1])] for edge in self.all_edges],
             "node_num": len(self.service2node_id),
             "event_num": len(self.log_templates) + 1,
             "metric_num": len(self.metric_names),
@@ -85,9 +84,15 @@ class DrainProcessor:
         if not line:
             return ""
 
-        return self._cache_manager.get_or_compute(
-            line, lambda: self._extract_template(line)
-        )
+        # Check cache first
+        cached_result = self._cache_manager.get(line)
+        if cached_result is not None:
+            return cached_result
+
+        # Extract template and cache it
+        template = self._extract_template(line)
+        self._cache_manager.set(line, template)
+        return template
 
     def _extract_template(self, line: str) -> str:
         result = self._template_miner.add_log_message(line)
@@ -110,6 +115,7 @@ class CaseProcessor:
         if "time" not in df.columns:
             return df
 
+        original_df = df  # Keep reference to original df
         try:
             time_dtype = df.select(pl.col("time")).dtypes[0]
             if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
@@ -130,13 +136,14 @@ class CaseProcessor:
                     [pl.col("time").cast(pl.Datetime).dt.offset_by("8h").alias("time")]
                 )
 
-            # Immediate cleanup
+            # Clean up original df and return result
             del df
             gc.collect()
             return result
         except Exception as e:
             logger.warning(f"Error processing time column: {e}")
-            return df
+            # Return original df if processing failed
+            return original_df
 
     def _assign_chunk_indices(
         self, df: pl.DataFrame, intervals: List[Tuple]
@@ -167,30 +174,48 @@ class CaseProcessor:
             "normal_trace": data_pack / "converted" / "normal_traces.parquet",
             "env": data_pack / "converted" / "env.json",
             "injection": data_pack / "converted" / "injection.json",
+            "eadro_metric": data_pack / "metric.parquet",
+            "eadro_trace": data_pack / "trace.parquet",
+            "eadro_log": data_pack / "log.parquet",
+            "eadro_fault_info": data_pack / "fault_info.json",
         }
 
     def get_time_intervals(
-        self, data_files: Dict[str, Path]
+        self, data_files: Dict[str, Path], dataset: str
     ) -> List[Tuple[datetime, datetime]]:
-        with open(data_files["env"]) as f:
-            env_data = json.load(f)
-
-        start_time = datetime.fromtimestamp(
-            int(env_data["NORMAL_START"]), tz=timezone.utc
-        )
-        end_time = datetime.fromtimestamp(
-            int(env_data["ABNORMAL_END"]), tz=timezone.utc
-        )
-
         intervals = []
-        current_time = start_time
-        window_duration = timedelta(minutes=2)
+        if dataset == "rcabench":
+            with open(data_files["env"]) as f:
+                env_data = json.load(f)
 
-        while current_time < end_time:
-            window_end = current_time + window_duration
-            intervals.append((current_time, min(window_end, end_time)))
-            current_time = window_end
+            start_time = datetime.fromtimestamp(
+                int(env_data["NORMAL_START"]), tz=timezone.utc
+            )
+            end_time = datetime.fromtimestamp(
+                int(env_data["ABNORMAL_END"]), tz=timezone.utc
+            )
 
+            current_time = start_time
+            window_duration = timedelta(minutes=2)
+
+            while current_time < end_time:
+                window_end = current_time + window_duration
+                intervals.append((current_time, min(window_end, end_time)))
+                current_time = window_end
+        if dataset == "eadro":
+            with open(data_files["eadro_fault_info"]) as f:
+                fault_info = json.load(f)
+
+            start_time = datetime.fromisoformat(fault_info["start_time"])
+            end_time = datetime.fromisoformat(fault_info["end_time"])
+
+            current_time = start_time
+            window_duration = timedelta(minutes=2)
+
+            while current_time < end_time:
+                window_end = current_time + window_duration
+                intervals.append((current_time, min(window_end, end_time)))
+                current_time = window_end
         return intervals
 
     def process_logs(
@@ -278,8 +303,6 @@ class CaseProcessor:
 
             except Exception as e:
                 logger.warning(f"Error processing {file_type}: {e}")
-                if "df" in locals():
-                    del df
                 gc.collect()
                 continue
 
@@ -292,7 +315,12 @@ class CaseProcessor:
         metric_num = len(self.global_metadata.metric_names)
         result = np.zeros((len(intervals), node_num, self.chunk_length, metric_num))
 
-        for file_type in ["normal_metric", "abnormal_metric"]:
+        for file_type in [
+            "normal_metric",
+            "abnormal_metric",
+            "normal_metric_sum",
+            "abnormal_metric_sum",
+        ]:
             df = self._safe_read_parquet(data_files[file_type], file_type)
             if df is None:
                 continue
@@ -310,8 +338,7 @@ class CaseProcessor:
                         ).alias("service_name")
                     ]
                 )
-                del df  # 立即释放原始df
-                gc.collect()
+                del df
 
                 filtered_df = service_mapped_df.filter(
                     pl.col("service_name").is_in(
@@ -319,8 +346,7 @@ class CaseProcessor:
                     )
                     & pl.col("metric").is_in(self.global_metadata.metric_names)
                 )
-                del service_mapped_df  # 立即释放服务映射后的df
-                gc.collect()
+                del service_mapped_df
 
                 if filtered_df.height == 0:
                     del filtered_df
@@ -340,18 +366,16 @@ class CaseProcessor:
                         .alias("metric_id"),
                     ]
                 ).filter((pl.col("node_id") != -1) & (pl.col("metric_id") != -1))
-                del filtered_df  # 立即释放过滤后的df
+                del filtered_df
                 gc.collect()
 
                 chunk_assigned_df = self._assign_chunk_indices(mapped_df, intervals)
-                del mapped_df  # 立即释放映射后的df
-                gc.collect()
+                del mapped_df
 
                 grouped = chunk_assigned_df.group_by(
                     ["chunk_idx", "node_id", "metric_id"]
                 ).agg([pl.col("value").sort_by("time").alias("values")])
-                del chunk_assigned_df  # 立即释放chunk分配后的df
-                gc.collect()
+                del chunk_assigned_df
 
                 for row in grouped.iter_rows(named=True):
                     chunk_idx = row["chunk_idx"]
@@ -362,14 +386,10 @@ class CaseProcessor:
                     values = self._normalize_sequence_length(values, self.chunk_length)
                     result[chunk_idx, node_id, :, metric_id] = values
 
-                del grouped  # 立即释放分组结果
-                gc.collect()
+                del grouped
 
             except Exception as e:
                 logger.warning(f"Error processing {file_type}: {e}")
-                if "df" in locals():
-                    del df
-                gc.collect()
                 continue
 
         return result
@@ -448,8 +468,6 @@ class CaseProcessor:
 
             except Exception as e:
                 logger.warning(f"Error processing {file_type}: {e}")
-                if "df" in locals():
-                    del df
                 gc.collect()
                 continue
 
@@ -482,9 +500,6 @@ class CaseProcessor:
 
             except Exception as e:
                 logger.warning(f"Error in first pass of {file_type}: {e}")
-                if "df" in locals():
-                    del df
-                gc.collect()
                 continue
 
         # Second pass: extract edges
@@ -529,9 +544,11 @@ class CaseProcessor:
                         [
                             pl.col("parent_service")
                             .replace(self.global_metadata.service2node_id)
+                            .cast(pl.Int32)
                             .alias("parent_id"),
                             pl.col("service_name")
                             .replace(self.global_metadata.service2node_id)
+                            .cast(pl.Int32)
                             .alias("current_id"),
                         ]
                     )
@@ -544,59 +561,63 @@ class CaseProcessor:
 
             except Exception as e:
                 logger.warning(f"Error in second pass of {file_type}: {e}")
-                if "df" in locals():
-                    del df
                 gc.collect()
                 continue
 
         return edges
 
     def generate_fault_labels(
-        self, data_files: Dict[str, Path], intervals: List[Tuple]
+        self, data_files: Dict[str, Path], intervals: List[Tuple], dataset: str
     ) -> List[int]:
-        with open(data_files["injection"]) as f:
-            injection_data = json.load(f)
-
-        conf = json.loads(injection_data["display_config"])
-        service = (
-            conf["injection_point"].get("source_service", "")
-            or conf["injection_point"].get("app_name", "")
-            or conf["injection_point"].get("app_label", "")
-        )
-
-        if not service:
-            raise ValueError("No fault service found in injection config")
-
-        injection_start = datetime.fromisoformat(
-            injection_data["start_time"].replace("Z", "+00:00")
-        )
-        injection_end = datetime.fromisoformat(
-            injection_data["end_time"].replace("Z", "+00:00")
-        )
-
-        if injection_start.tzinfo is None:
-            injection_start = injection_start.replace(tzinfo=timezone.utc)
-        else:
-            injection_start = injection_start.astimezone(timezone.utc)
-
-        if injection_end.tzinfo is None:
-            injection_end = injection_end.replace(tzinfo=timezone.utc)
-        else:
-            injection_end = injection_end.astimezone(timezone.utc)
-
         labels = []
-        for start_time, end_time in intervals:
-            if injection_start < end_time and injection_end > start_time:
-                labels.append(self.global_metadata.service2node_id.get(service, -1))
-            else:
-                labels.append(-1)
+        if dataset == "rcabench":
+            with open(data_files["injection"]) as f:
+                injection_data = json.load(f)
 
+            conf = json.loads(injection_data["display_config"])
+            service = (
+                conf["injection_point"].get("source_service", "")
+                or conf["injection_point"].get("app_name", "")
+                or conf["injection_point"].get("app_label", "")
+            )
+
+            if not service:
+                raise ValueError("No fault service found in injection config")
+
+            injection_start = datetime.fromisoformat(
+                injection_data["start_time"].replace("Z", "+00:00")
+            )
+            injection_end = datetime.fromisoformat(
+                injection_data["end_time"].replace("Z", "+00:00")
+            )
+
+            if injection_start.tzinfo is None:
+                injection_start = injection_start.replace(tzinfo=timezone.utc)
+            else:
+                injection_start = injection_start.astimezone(timezone.utc)
+
+            if injection_end.tzinfo is None:
+                injection_end = injection_end.replace(tzinfo=timezone.utc)
+            else:
+                injection_end = injection_end.astimezone(timezone.utc)
+
+            for start_time, end_time in intervals:
+                if injection_start < end_time and injection_end > start_time:
+                    labels.append(self.global_metadata.service2node_id.get(service, -1))
+                else:
+                    labels.append(-1)
+        if dataset == "eadro":
+            with open(data_files["eadro_fault_info"]) as f:
+                fault_info = json.load(f)
+            service = fault_info.get("injection_name", "")
+            if service == "":
+                raise ValueError("No fault service found in EADRO fault info")
         return labels
 
     @timeit()
-    def process_case(self, data_pack_path: Path) -> Dict:
+    def process_case(self, data_pack_path: Path, dataset: str) -> Dict:
         data_files = self.derive_filenames(data_pack_path)
-        intervals = self.get_time_intervals(data_files)
+        intervals = self.get_time_intervals(data_files, dataset=dataset)
 
         if not intervals:
             return {}
@@ -605,7 +626,7 @@ class CaseProcessor:
         metrics_data = self.process_metrics(data_files, intervals)
         traces_data = self.process_traces(data_files, intervals)
         edges = self.extract_service_graph(data_files)
-        labels = self.generate_fault_labels(data_files, intervals)
+        labels = self.generate_fault_labels(data_files, intervals, dataset=dataset)
 
         chunks = {}
         for i in range(len(intervals)):
@@ -653,15 +674,11 @@ class DatasetBuilder:
         self.chunk_length = chunk_length
         self.global_metadata = GlobalMetadata()
 
-    def collect_metadata_from_case(self, data_pack_path: Path) -> Dict:
-        """Collect metadata from a single case"""
-        return collect_metadata_worker(data_pack_path, self.chunk_length)
-
     def build_global_metadata(
         self,
         data_packs: List[Path],
         output_dir: Path,
-        enable_checkpointing: bool = True,
+        enable_checkpointing: bool = False,
     ):
         if enable_checkpointing and self.load_checkpoint(output_dir):
             logger.info("Resumed global metadata from checkpoint")
@@ -671,14 +688,17 @@ class DatasetBuilder:
 
         all_log_messages = []
 
+        # Direct metadata collection instead of using separate function
         for data_pack in tqdm(data_packs, desc="Collecting metadata"):
             try:
-                metadata = collect_metadata_worker(data_pack, self.chunk_length)
+                # Inline metadata collection logic
+                metadata = self._collect_case_metadata(data_pack)
                 self.global_metadata.update_from_case(metadata)
                 all_log_messages.extend(metadata["log_messages"])
 
-                if len(all_log_messages) > 200000:
-                    all_log_messages = random.sample(all_log_messages, 200000)
+                # Limit message count to prevent memory issues
+                if len(all_log_messages) > 500000:
+                    all_log_messages = random.sample(all_log_messages, 500000)
 
             except Exception as e:
                 logger.error(f"Error processing metadata: {e}")
@@ -687,17 +707,32 @@ class DatasetBuilder:
             f"Extracting log templates from {len(all_log_messages)} messages..."
         )
 
+        # Direct template processing instead of using worker function
         processed_messages = []
         batch_size = 1000
-        message_batches = [
-            all_log_messages[i : i + batch_size]
-            for i in range(0, len(all_log_messages), batch_size)
-        ]
 
-        for batch in tqdm(message_batches, desc="Processing log templates"):
+        # Initialize drain processor once
+        persistence = FilePersistence("data/drain_templates")
+        miner_config = TemplateMinerConfig()
+        miner_config.load("drain.ini")
+        template_miner = TemplateMiner(persistence, config=miner_config)
+
+        for i in tqdm(
+            range(0, len(all_log_messages), batch_size), desc="Processing log templates"
+        ):
             try:
-                batch_results = process_log_templates_worker(batch)
-                processed_messages.extend(batch_results)
+                batch = all_log_messages[i : i + batch_size]
+                # Process batch directly
+                for msg in batch:
+                    line = str(msg).strip()
+                    if not line:
+                        continue
+
+                    result = template_miner.add_log_message(line)
+                    template = result.get("template_mined")
+                    if template and template.strip():
+                        processed_messages.append(template)
+
             except Exception as e:
                 logger.error(f"Error processing log template batch: {e}")
 
@@ -721,7 +756,8 @@ class DatasetBuilder:
         self,
         data_packs: List[Path],
         output_dir: Path,
-        enable_checkpointing: bool = True,
+        enable_checkpointing: bool,
+        dataset: str,
     ) -> Dict:
         all_chunks = {}
         all_edges = set()
@@ -749,11 +785,27 @@ class DatasetBuilder:
 
         for data_pack in tqdm(data_packs, desc="Processing cases"):
             try:
-                result = process_case_worker(
-                    data_pack, self.chunk_length, metadata_dict
+                # Inline case processing instead of using worker function
+                logger.info(f"Starting processing case: {data_pack.name}")
+
+                # Create global metadata for this case
+                case_global_metadata = GlobalMetadata()
+                case_global_metadata.service2node_id = metadata_dict["service2node_id"]
+                case_global_metadata.node_id2service = metadata_dict["node_id2service"]
+                case_global_metadata.log_templates = metadata_dict["log_templates"]
+                case_global_metadata.metric_names = metadata_dict["metric_names"]
+                case_global_metadata.template2id = metadata_dict["template2id"]
+
+                # Process case directly
+                processor = CaseProcessor(self.chunk_length, case_global_metadata)
+                result = processor.process_case(data_pack, dataset=dataset)
+
+                logger.info(
+                    f"Completed processing case: {data_pack.name}, chunks: {len(result.get('chunks', {}))}"
                 )
+
                 if result is None:
-                    logger.warning("Worker returned None result")
+                    logger.warning("Case processing returned None result")
                     continue
 
                 all_chunks.update(result["chunks"])
@@ -856,7 +908,6 @@ class DatasetBuilder:
     def save_checkpoint(
         self, output_dir: Path, metadata: Optional[Dict] = None
     ) -> None:
-        """保存检查点状态"""
         checkpoint_file = output_dir / "checkpoint.json"
         checkpoint_data = {
             "timestamp": datetime.now().isoformat(),
@@ -951,155 +1002,87 @@ class DatasetBuilder:
             checkpoint_file.unlink()
             logger.info("Cleaned up checkpoint file")
 
+    def _collect_case_metadata(self, data_pack_path: Path) -> Dict:
+        """Collect metadata from a single case - inlined version of collect_metadata_worker"""
+        try:
+            case_processor = CaseProcessor(self.chunk_length, GlobalMetadata())
+            data_files = case_processor.derive_filenames(data_pack_path)
 
-def process_log_templates_worker(messages: List[str]) -> List[str]:
-    try:
-        persistence = FilePersistence("data/drain_templates")
-        miner_config = TemplateMinerConfig()
-        miner_config.load("drain.ini")
-        template_miner = TemplateMiner(persistence, config=miner_config)
+            services = set()
+            metrics = set()
+            log_messages = []
 
-        processed_messages = []
-        for msg in messages:
-            line = str(msg).strip()
-            if not line:
-                continue
+            file_types = [
+                "normal_log",
+                "abnormal_log",
+                "normal_metric",
+                "abnormal_metric",
+                "normal_trace",
+                "abnormal_trace",
+                "abnormal_metric_sum",
+                "normal_metric_sum",
+                "eadro_metric",
+                "eadro_trace",
+                "eadro_log",
+                "eadro_fault_info",
+            ]
 
-            result = template_miner.add_log_message(line)
-            template = result.get("template_mined")
-            if template is None:
-                logger.warning(f"Failed to extract template for: {line}")
-                continue
-            if template.strip():
-                processed_messages.append(template)
+            for file_type in file_types:
+                file_path = data_files[file_type]
+                if not file_path.exists():
+                    continue
 
-        return processed_messages
-    except Exception as e:
-        logger.error(f"Error processing log templates: {e}")
-        return []
+                try:
+                    if file_type.endswith(".json"):
+                        continue
 
+                    df = pl.read_parquet(file_path)
 
-def collect_metadata_worker(data_pack_path: Path, chunk_length: int) -> Dict:
-    try:
-        case_processor = CaseProcessor(chunk_length, GlobalMetadata())
-        data_files = case_processor.derive_filenames(data_pack_path)
+                    if "service_name" in df.columns:
+                        unique_services = (
+                            df.select("service_name").unique().to_series().to_list()
+                        )
+                        services.update(s for s in unique_services if s)
 
-        services = set()
-        metrics = set()
-        log_messages = []
+                    if "metric" in df.columns:
+                        unique_metrics = (
+                            df.select("metric").unique().to_series().to_list()
+                        )
+                        metrics.update(m for m in unique_metrics if m)
 
-        file_types = [
-            "normal_log",
-            "abnormal_log",
-            "normal_metric",
-            "abnormal_metric",
-            "normal_trace",
-            "abnormal_trace",
-            "abnormal_metric_sum",
-            "normal_metric_sum",
-        ]
+                    # Collect log messages
+                    if "message" in df.columns and file_type in [
+                        "normal_log",
+                        "abnormal_log",
+                        "eadro_log",
+                    ]:
+                        messages = df.select("message").to_series().to_list()
+                        log_messages.extend(m for m in messages if m and str(m).strip())
 
-        for file_type in file_types:
-            file_path = data_files[file_type]
-            if not file_path.exists():
-                continue
+                    del df
 
-            try:
-                df = pl.read_parquet(file_path)
-
-                if "service_name" in df.columns:
-                    service_df = df.select("service_name").filter(
-                        pl.col("service_name").is_not_null()
+                except Exception as e:
+                    logger.warning(
+                        f"Error reading {file_type} from {data_pack_path.name}: {e}"
                     )
-                    service_names = service_df.to_series().unique().to_list()
-                    services.update(service_names)
-                    del service_df
 
-                if "metric" in df.columns:
-                    metric_df = df.select("metric")
-                    metric_names = metric_df.to_series().unique().to_list()
-                    metrics.update(metric_names)
-                    del metric_df
-
-                del df
-
-            except Exception as e:
-                logger.warning(
-                    f"Error reading {file_type} from {data_pack_path.name}: {e}"
-                )
-                continue
-
-        for file_type in ["normal_log", "abnormal_log"]:
-            file_path = data_files[file_type]
-            if not file_path.exists():
-                continue
-
-            try:
-                df = pl.read_parquet(file_path)
-                if "message" in df.columns:
-                    message_df = df.select("message").filter(
-                        pl.col("message").is_not_null()
-                        & (pl.col("message").cast(pl.Utf8).str.strip_chars() != "")
-                    )
-                    messages = message_df.to_series().to_list()
-                    log_messages.extend(messages)
-                    del message_df
-
-                del df
-
-            except Exception as e:
-                logger.warning(
-                    f"Error reading messages from {file_type} in {data_pack_path.name}: {e}"
-                )
-                continue
-
-        case_name = data_pack_path.name
-        return {
-            "case_name": case_name,
-            "services": services,
-            "metrics": metrics,
-            "log_messages": log_messages,
-        }
-    except Exception as e:
-        logger.error(f"Error collecting metadata from {data_pack_path.name}: {e}")
-        return {
-            "case_name": data_pack_path.name,
-            "services": set(),
-            "metrics": set(),
-            "log_messages": [],
-        }
-    finally:
-        gc.collect()
-
-
-def process_case_worker(
-    data_pack_path: Path, chunk_length: int, metadata_dict: Dict
-) -> Dict:
-    try:
-        logger.info(f"Starting processing case: {data_pack_path.name}")
-
-        global_metadata = GlobalMetadata()
-        global_metadata.service2node_id = metadata_dict["service2node_id"]
-        global_metadata.node_id2service = metadata_dict["node_id2service"]
-        global_metadata.log_templates = metadata_dict["log_templates"]
-        global_metadata.metric_names = metadata_dict["metric_names"]
-        global_metadata.template2id = metadata_dict["template2id"]
-
-        processor = CaseProcessor(chunk_length, global_metadata)
-        result = processor.process_case(data_pack_path)
-
-        logger.info(
-            f"Completed processing case: {data_pack_path.name}, chunks: {len(result.get('chunks', {}))}"
-        )
-        return result
-
-    except KeyboardInterrupt:
-        logger.warning(f"KeyboardInterrupt in worker processing {data_pack_path.name}")
-        raise
-    except Exception as e:
-        logger.error(f"Error in worker processing {data_pack_path.name}: {e}")
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        return {"chunks": {}, "edges": set()}
+            case_name = data_pack_path.name
+            return {
+                "case_name": case_name,
+                "services": services,
+                "metrics": metrics,
+                "log_messages": log_messages,
+            }
+        except Exception as e:
+            logger.error(f"Error collecting metadata from {data_pack_path.name}: {e}")
+            return {
+                "case_name": data_pack_path.name,
+                "services": set(),
+                "metrics": set(),
+                "log_messages": [],
+            }
+        finally:
+            gc.collect()
 
 
 def create_dataset(
@@ -1109,28 +1092,33 @@ def create_dataset(
     chunk_length: int = 10,
     train_ratio: float = 0.7,
     enable_checkpointing: bool = True,
-    resume_from_checkpoint: bool = True,
+    dataset="rcabench",
 ) -> int:
     try:
         logger.info("Starting dataset creation...")
 
-        config = Configuration(host="http://10.10.10.220:32080")
-        with ApiClient(configuration=config) as client:
-            api = InjectionApi(api_client=client)
-            resp = api.api_v1_injections_analysis_with_issues_get()
+        if dataset == "eadro":
+            sn = Path("/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset")
+            data_packs = [p for p in sn.iterdir() if p.is_dir()]
+        else:
+            config = Configuration(host="http://10.10.10.220:32080")
+            with ApiClient(configuration=config) as client:
+                api = InjectionApi(api_client=client)
+                resp = api.api_v1_injections_analysis_with_issues_get()
 
-        assert resp.data is not None, "No cases found in the response"
-        case_names = list(
-            set([item.injection_name for item in resp.data if item.injection_name])
-        )[:max_cases]
-        data_packs = [Path(data_root) / name for name in case_names]
+            assert resp.data is not None, "No cases found in the response"
+            case_names = list(
+                set([item.injection_name for item in resp.data if item.injection_name])
+            )
+            data_packs = [Path(data_root) / name for name in case_names]
 
+        data_packs = data_packs[:max_cases]
         logger.info(f"Found {len(data_packs)} data packs to process")
 
         builder = DatasetBuilder(chunk_length=chunk_length)
 
-        output_path = Path(output_dir)
-        if resume_from_checkpoint and enable_checkpointing:
+        output_path = Path(output_dir) / dataset
+        if enable_checkpointing:
             if builder.load_checkpoint(output_path):
                 logger.info("Resuming from checkpoint...")
 
@@ -1156,7 +1144,7 @@ def create_dataset(
 
         logger.info("Processing cases serially...")
         all_chunks = builder.process_cases(
-            data_packs, Path(output_dir), enable_checkpointing
+            data_packs, Path(output_dir), enable_checkpointing, dataset=dataset
         )
 
         logger.info("Saving final dataset...")
