@@ -90,7 +90,6 @@ class DrainProcessor:
         if not line:
             return ""
 
-        # Check cache first
         cached_result = self._cache_manager.get(line)
         if cached_result is not None:
             return cached_result
@@ -825,6 +824,11 @@ class DatasetBuilder:
     def __init__(self, chunk_length: int = 10):
         self.chunk_length = chunk_length
         self.global_metadata = GlobalMetadata()
+        self.drain_processor = DrainProcessor(
+            conf="drain.ini",
+            save_path="data/drain_templates",
+            cache_dir="./cache/drain",
+        )
 
     def build_global_metadata(
         self,
@@ -861,11 +865,6 @@ class DatasetBuilder:
         processed_messages = []
         batch_size = 1000
 
-        persistence = FilePersistence("data/drain_templates")
-        miner_config = TemplateMinerConfig()
-        miner_config.load("drain.ini")
-        template_miner = TemplateMiner(persistence, config=miner_config)
-
         for i in tqdm(
             range(0, len(all_log_messages), batch_size), desc="Processing log templates"
         ):
@@ -877,8 +876,7 @@ class DatasetBuilder:
                     if not line:
                         continue
 
-                    result = template_miner.add_log_message(line)
-                    template = result.get("template_mined")
+                    template = self.drain_processor.process(line)
                     if template and template.strip():
                         processed_messages.append(template)
 
@@ -886,7 +884,7 @@ class DatasetBuilder:
                 logger.error(f"Error processing log template batch: {e}")
 
         template_counts = Counter(processed_messages)
-        top_templates = [template for template, _ in template_counts.most_common(100)]
+        top_templates = [template for template, _ in template_counts.most_common(500)]
 
         self.global_metadata.finalize_mappings(top_templates)
 

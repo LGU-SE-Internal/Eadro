@@ -91,6 +91,7 @@ class ConvNet(nn.Module):
         kernel_sizes: List[int],
         dilation: int = 2,
         dev: str = "cpu",
+        dropout: float = 0.0,
     ) -> None:
         super(ConvNet, self).__init__()
         layers = []
@@ -113,6 +114,9 @@ class ConvNet(nn.Module):
                 nn.ReLU(),
                 Chomp1d(padding),
             ]
+            # Add dropout after each layer except the last one
+            if dropout > 0.0 and i < len(kernel_sizes) - 1:
+                layers.append(nn.Dropout(dropout))
 
         self.network = nn.Sequential(*layers)
 
@@ -193,6 +197,7 @@ class TraceModel(nn.Module):
             num_channels=trace_hiddens,
             kernel_sizes=trace_kernel_sizes,
             dev=device,
+            dropout=kwargs.get('trace_dropout', 0.0),
         )
 
         self.self_attn = self_attn
@@ -238,6 +243,7 @@ class MetricModel(nn.Module):
             num_channels=metric_hiddens,
             kernel_sizes=metric_kernel_sizes,
             dev=device,
+            dropout=kwargs.get('metric_dropout', 0.0),
         )
 
         self.self_attn = self_attn

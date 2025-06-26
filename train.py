@@ -173,7 +173,7 @@ def main(
     gpu: bool = typer.Option(True, help="Use GPU"),
     epochs: int = typer.Option(500, help="Training epochs"),
     batch_size: int = typer.Option(256, help="Batch size"),
-    lr: float = typer.Option(0.05, help="Learning rate"),
+    lr: float = typer.Option(0.01, help="Learning rate"),
     patience: int = typer.Option(10, help="Early stopping patience"),
     lr_scheduler: str = typer.Option(
         "none", help="Learning rate scheduler: none, step, exponential, cosine, plateau"
