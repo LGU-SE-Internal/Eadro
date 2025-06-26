@@ -1,5 +1,4 @@
-
-dataset = "sn"
+dataset = "tt"
 
 [datasets.sn]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"

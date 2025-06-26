@@ -67,18 +67,7 @@ def collate_fn(
     batch: List[Tuple[dgl.DGLGraph, int]],
 ) -> Tuple[dgl.DGLGraph, torch.Tensor]:
     graphs, labels = map(list, zip(*batch))
-
-    # 调试：打印单个图的节点特征维度
-    print(f"Single graph nodes: {graphs[0].number_of_nodes()}")
-    print(f"Single graph 'logs' shape: {graphs[0].ndata['logs'].shape}")
-
     batched_graph = dgl.batch(graphs)
-
-    # 调试：打印批处理后的维度
-    print(f"Batched graph nodes: {batched_graph.number_of_nodes()}")
-    print(f"Batched graph 'logs' shape: {batched_graph.ndata['logs'].shape}")
-    print(f"Batch graph info: {batched_graph.batch_size} graphs in batch")
-
     return batched_graph, torch.tensor(labels, dtype=torch.long)
 
 
