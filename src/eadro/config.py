@@ -19,7 +19,7 @@ class Config:
             "lr_min": 1e-6,
             "self_attn": True,
             "fuse_dim": 128,
-            "alpha": 0.1,
+            "alpha": 0.5,  # Fixed: changed from 0.1 to match original version
             "locate_hiddens": [64],
             "detect_hiddens": [64],
             "log_dim": 16,

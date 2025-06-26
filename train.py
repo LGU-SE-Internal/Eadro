@@ -26,13 +26,18 @@ class ChunkDataset(Dataset):
             self.idx2id[idx] = chunk_id
             chunk = chunks[chunk_id]
 
-            try:
-                graph = dgl.graph(edges, num_nodes=node_num)
-            except Exception:
-                graph = dgl.DGLGraph()
-                graph.add_nodes(node_num)
-                if edges:
-                    graph.add_edges(edges[0], edges[1])
+            # Fix graph construction to handle different edge formats
+            if (
+                isinstance(edges[0], list) and len(edges) == 2
+            ):  # Original format: [[src_nodes], [dst_nodes]]
+                graph = dgl.graph((edges[0], edges[1]), num_nodes=node_num)
+            elif (
+                isinstance(edges[0], list) and len(edges[0]) == 2
+            ):  # New format: [[src1,dst1], [src2,dst2], ...]
+                src_nodes, dst_nodes = zip(*edges)
+                graph = dgl.graph((src_nodes, dst_nodes), num_nodes=node_num)
+            else:
+                assert False, "Unsupported edge format"
 
             graph.ndata["logs"] = torch.FloatTensor(chunk["logs"])
             graph.ndata["metrics"] = torch.FloatTensor(chunk["metrics"])
@@ -171,7 +176,7 @@ app = typer.Typer()
 def main(
     random_seed: int = typer.Option(42, help="Random seed"),
     gpu: bool = typer.Option(True, help="Use GPU"),
-    epochs: int = typer.Option(500, help="Training epochs"),
+    epochs: int = typer.Option(50, help="Training epochs"),
     batch_size: int = typer.Option(256, help="Batch size"),
     lr: float = typer.Option(0.01, help="Learning rate"),
     patience: int = typer.Option(10, help="Early stopping patience"),

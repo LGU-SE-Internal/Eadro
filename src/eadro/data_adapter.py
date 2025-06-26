@@ -26,6 +26,28 @@ from drain3.file_persistence import FilePersistence
 from drain3.template_miner_config import TemplateMinerConfig
 from rcabench.openapi import InjectionApi, ApiClient, Configuration
 from .utils import CacheManager, timeit, Dataset
+from .hawkes_client import HawkesRPCClient
+
+
+def log_hawkes_modeling(chunk_logs, end_time, event_num, decay=3, ini_intensity=0.2):
+    with HawkesRPCClient(host="localhost", port=8080, timeout=30) as client:
+        result = client.model_hawkes_process(
+            chunk_logs=chunk_logs,
+            end_time=end_time,
+            event_num=event_num,
+            decay=decay,
+            ini_intensity=ini_intensity,
+        )
+        assert result is not None, "Hawkes modeling failed to return results"
+        return result
+
+
+def z_zero_scaler(x):
+    """
+    Z-score normalization function (equivalent to original version)
+    """
+    x = np.array(x)
+    return (x - np.mean(x)) / (np.std(x) + 1e-8)
 
 
 class GlobalMetadata:
@@ -119,7 +141,7 @@ class CaseProcessor:
         self.chunk_length = chunk_length
         self.global_metadata = global_metadata
 
-    def _process_time_column(self, df: pl.DataFrame) -> pl.LazyFrame:
+    def _process_time_column(self, df: pl.DataFrame, file_type: str = "") -> pl.LazyFrame:
         if "time" not in df.columns:
             return df.lazy()
 
@@ -163,23 +185,62 @@ class CaseProcessor:
                 self.dataset == Dataset.EADRO_SOCIAL_NETWORK
                 or self.dataset == Dataset.EADRO_TRAIN_TICKET
             ):
-                # For EADRO datasets, simpler time processing
+                # For EADRO datasets, apply specific timezone offsets based on data type
+                # Following original preprocessing logic:
+                # - metrics and records: +16 hours
+                # - traces: +8 hours  
+                # - logs: handled during timestamp extraction
+                
+                offset = "0h"  # Default no offset
+                if file_type in ["eadro_metric"]:
+                    # Metrics need +16 hours offset (original: +16*60*60 seconds)
+                    offset = "16h"
+                elif file_type in ["eadro_trace"]:
+                    # Traces need +8 hours offset (original: +8*3600 seconds)
+                    offset = "8h"
+                # Logs and fault_info are handled differently in original code
+                
                 if str(time_dtype).startswith("Utf8") or str(time_dtype).startswith(
                     "String"
                 ):
-                    result = lf.with_columns(
-                        [pl.col("time").str.to_datetime().alias("time")]
-                    )
+                    if offset != "0h":
+                        result = lf.with_columns(
+                            [
+                                pl.col("time")
+                                .str.to_datetime()
+                                .dt.offset_by(offset)
+                                .alias("time")
+                            ]
+                        )
+                    else:
+                        result = lf.with_columns(
+                            [pl.col("time").str.to_datetime().alias("time")]
+                        )
                 elif (
                     "datetime" in str(time_dtype).lower()
                     or "timestamp" in str(time_dtype).lower()
                 ):
-                    result = lf.with_columns([pl.col("time").alias("time")])
+                    if offset != "0h":
+                        result = lf.with_columns(
+                            [pl.col("time").dt.offset_by(offset).alias("time")]
+                        )
+                    else:
+                        result = lf.with_columns([pl.col("time").alias("time")])
                 else:
                     # Try to cast to datetime first
-                    result = lf.with_columns(
-                        [pl.col("time").cast(pl.Datetime).alias("time")]
-                    )
+                    if offset != "0h":
+                        result = lf.with_columns(
+                            [
+                                pl.col("time")
+                                .cast(pl.Datetime)
+                                .dt.offset_by(offset)
+                                .alias("time")
+                            ]
+                        )
+                    else:
+                        result = lf.with_columns(
+                            [pl.col("time").cast(pl.Datetime).alias("time")]
+                        )
             else:
                 result = lf
 
@@ -253,20 +314,24 @@ class CaseProcessor:
             with open(data_files["eadro_fault_info"]) as f:
                 fault_info = json.load(f)
 
+            # Apply +16 hours offset to match original preprocessing
+            # (original: processed_records["start"] += 16 * 3600)
+            offset_hours = 16
+
             if (
                 "fault_start_time" in fault_info
                 and fault_info["fault_start_time"] != ""
             ):
-                start_time = datetime.fromisoformat(fault_info["fault_start_time"])
+                start_time = datetime.fromisoformat(fault_info["fault_start_time"]) + timedelta(hours=offset_hours)
             if "fault_end_time" in fault_info and fault_info["fault_end_time"] != "":
-                end_time = datetime.fromisoformat(fault_info["fault_end_time"])
+                end_time = datetime.fromisoformat(fault_info["fault_end_time"]) + timedelta(hours=offset_hours)
             if (
                 "normal_start_time" in fault_info
                 and fault_info["normal_start_time"] != ""
             ):
-                start_time = datetime.fromisoformat(fault_info["normal_start_time"])
+                start_time = datetime.fromisoformat(fault_info["normal_start_time"]) + timedelta(hours=offset_hours)
             if "normal_end_time" in fault_info and fault_info["normal_end_time"] != "":
-                end_time = datetime.fromisoformat(fault_info["normal_end_time"])
+                end_time = datetime.fromisoformat(fault_info["normal_end_time"]) + timedelta(hours=offset_hours)
 
             current_time = start_time
             window_duration = timedelta(minutes=2)
@@ -281,13 +346,12 @@ class CaseProcessor:
         self, data_files: Dict[str, Path], intervals: List[Tuple]
     ) -> np.ndarray:
         """
-        Process log data using LazyFrame optimizations for improved performance.
+        Process log data with Hawkes process modeling to match original version performance.
 
-        Optimizations:
-        - Uses LazyFrame for deferred execution and memory efficiency
-        - Early filtering to reduce data movement
-        - Explicit memory cleanup with del statements
-        - Small sample collection to check empty datasets
+        Key improvements:
+        - Applies Hawkes process modeling to log event sequences
+        - Maintains temporal ordering and event timing information
+        - Equivalent to original version's logHaw functionality
         """
         node_num = len(self.global_metadata.service2node_id)
         event_num = len(self.global_metadata.log_templates) + 1
@@ -299,7 +363,7 @@ class CaseProcessor:
                 continue
 
             try:
-                lf = self._process_time_column(df)
+                lf = self._process_time_column(df, file_type)
                 del df
 
                 filtered_lf = lf.filter(
@@ -309,7 +373,7 @@ class CaseProcessor:
                 )
                 del lf
 
-                # Check if filtered data is empty by collecting a small sample
+                # Check if filtered data is empty
                 if filtered_lf.limit(1).collect().height == 0:
                     del filtered_lf
                     continue
@@ -346,23 +410,107 @@ class CaseProcessor:
                     del chunk_assigned_lf
                     continue
 
-                counts_lf = chunk_assigned_lf.group_by(
-                    ["chunk_idx", "node_id", "template_id"]
-                ).len()
+                # Collect data for Hawkes process modeling
+                chunk_data = chunk_assigned_lf.collect()
                 del chunk_assigned_lf
 
-                # Collect the results and iterate
-                counts_df = counts_lf.collect()
-                del counts_lf
+                # Process each chunk with Hawkes modeling
+                no_log_chunk = 0
+                for chunk_idx, (start_time, end_time) in enumerate(intervals):
+                    try:
+                        # Filter data for this chunk
+                        chunk_logs = chunk_data.filter(pl.col("chunk_idx") == chunk_idx)
 
-                for row in counts_df.iter_rows(named=True):
-                    chunk_idx = row["chunk_idx"]
-                    node_id = row["node_id"]
-                    template_id = row["template_id"]
-                    count = row["len"]
-                    result[chunk_idx, node_id, template_id] += count
+                        if chunk_logs.height == 0:
+                            no_log_chunk += 1
+                            continue
 
-                del counts_df
+                        # Process each service in this chunk
+                        unique_services = (
+                            chunk_logs.select("node_id").unique().to_series().to_list()
+                        )
+
+                        for node_id in unique_services:
+                            service_data = chunk_logs.filter(
+                                pl.col("node_id") == node_id
+                            )
+
+                            # Prepare knots for Hawkes process (equivalent to original version)
+                            knots = [np.array([0.0]) for _ in range(event_num)]
+
+                            # Process each event template for this service
+                            unique_templates = (
+                                service_data.select("template_id")
+                                .unique()
+                                .to_series()
+                                .to_list()
+                            )
+
+                            for template_id in unique_templates:
+                                event_data = service_data.filter(
+                                    pl.col("template_id") == template_id
+                                )
+
+                                # Extract timestamps and convert to relative time
+                                timestamps = (
+                                    event_data.select("time").to_series().to_numpy()
+                                )
+                                if len(timestamps) > 0:
+                                    # Convert datetime objects to timestamps (matching original logic)
+                                    if timestamps.dtype.kind == "M":  # datetime64 type
+                                        # Convert datetime64 to unix timestamps (float64)
+                                        timestamps_float = (
+                                            timestamps.astype("datetime64[ns]").astype(
+                                                np.float64
+                                            )
+                                            / 1e9
+                                        )
+                                    else:
+                                        timestamps_float = timestamps.astype(np.float64)
+
+                                    # Get chunk start timestamp
+                                    start_ts = (
+                                        start_time.timestamp()
+                                        if hasattr(start_time, "timestamp")
+                                        else float(start_time)
+                                    )
+
+                                    # Calculate relative times
+                                    relative_times = timestamps_float - start_ts
+
+                                    # Add small perturbation to handle identical timestamps (original logic)
+                                    perturbations = np.array(
+                                        [
+                                            idx * 1e-5
+                                            for idx in range(len(relative_times))
+                                        ]
+                                    )
+                                    knots[template_id] = relative_times + perturbations
+
+                            # Apply Hawkes process modeling
+                            end_ts = (
+                                end_time.timestamp()
+                                if hasattr(end_time, "timestamp")
+                                else float(end_time)
+                            )
+                            start_ts = (
+                                start_time.timestamp()
+                                if hasattr(start_time, "timestamp")
+                                else float(start_time)
+                            )
+                            end_time_rel = end_ts - start_ts + 1
+
+                            hawkes_params = log_hawkes_modeling(
+                                knots, end_time_rel, event_num
+                            )
+                            result[chunk_idx, node_id, :] = hawkes_params
+
+                    except Exception as e:
+                        logger.warning(f"Error processing chunk {chunk_idx}: {e}")
+                        no_log_chunk += 1
+                        continue
+
+                del chunk_data
                 gc.collect()
 
             except Exception as e:
@@ -400,7 +548,7 @@ class CaseProcessor:
                 continue
 
             try:
-                lf = self._process_time_column(df)
+                lf = self._process_time_column(df, file_type)
                 del df
 
                 service_mapped_lf = lf.with_columns(
@@ -483,6 +631,10 @@ class CaseProcessor:
                     )
 
                     values = self._normalize_sequence_length(values, self.chunk_length)
+
+                    # Apply z-score normalization (matching original version)
+                    values = z_zero_scaler(values)
+
                     result[chunk_idx, node_id, :, metric_id] = values
 
                 del grouped_df
@@ -513,7 +665,7 @@ class CaseProcessor:
                     del df
                     continue
 
-                lf = self._process_time_column(df)
+                lf = self._process_time_column(df, file_type)
                 del df
 
                 filtered_lf = lf.filter(pl.col("service_name").is_in(valid_services))
@@ -569,6 +721,10 @@ class CaseProcessor:
                         durations = self._normalize_sequence_length(
                             durations, self.chunk_length
                         )
+
+                        # Apply z-score normalization (matching original version)
+                        durations = z_zero_scaler(durations)
+
                         result[chunk_idx, node_id, :, 0] = durations
 
                 del grouped_df
@@ -577,6 +733,14 @@ class CaseProcessor:
                 logger.warning(f"Error processing {file_type}: {e}")
                 gc.collect()
                 continue
+
+        # Apply global z-score normalization to traces (matching original version)
+        # Original version: latency[:, i, :, 0] = z_zero_scaler(latency[:, i, :, 0])
+        node_num = len(self.global_metadata.service2node_id)
+        for node_id in range(node_num):
+            node_traces = result[:, node_id, :, 0].flatten()
+            if len(node_traces[~np.isnan(node_traces)]) > 0:
+                result[:, node_id, :, 0] = z_zero_scaler(result[:, node_id, :, 0])
 
         return result
 
@@ -725,20 +889,25 @@ class CaseProcessor:
             with open(data_files["eadro_fault_info"]) as f:
                 fault_info = json.load(f)
             service = fault_info.get("injection_name", "")
+            
+            # Apply +16 hours offset to match original preprocessing
+            # (original: start += 16 * 3600, end += 16 * 3600)
+            offset_hours = 16
+            
             if (
                 "fault_start_time" in fault_info
                 and fault_info["fault_start_time"] != ""
             ):
-                start_time = datetime.fromisoformat(fault_info["fault_start_time"])
+                start_time = datetime.fromisoformat(fault_info["fault_start_time"]) + timedelta(hours=offset_hours)
             if "fault_end_time" in fault_info and fault_info["fault_end_time"] != "":
-                end_time = datetime.fromisoformat(fault_info["fault_end_time"])
+                end_time = datetime.fromisoformat(fault_info["fault_end_time"]) + timedelta(hours=offset_hours)
             if (
                 "normal_start_time" in fault_info
                 and fault_info["normal_start_time"] != ""
             ):
-                start_time = datetime.fromisoformat(fault_info["normal_start_time"])
+                start_time = datetime.fromisoformat(fault_info["normal_start_time"]) + timedelta(hours=offset_hours)
             if "normal_end_time" in fault_info and fault_info["normal_end_time"] != "":
-                end_time = datetime.fromisoformat(fault_info["normal_end_time"])
+                end_time = datetime.fromisoformat(fault_info["normal_end_time"]) + timedelta(hours=offset_hours)
 
             for st, et in intervals:
                 if start_time < et and end_time > st and service != "":
