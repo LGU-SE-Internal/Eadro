@@ -1,58 +1,58 @@
 import logging
+import pickle
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict, Any
 import torch
 import dgl
 import typer
 from torch.utils.data import Dataset, DataLoader
 
 from src.eadro.utils import (
-    load_chunks,
-    read_json,
+    seed_everything,
     dump_params,
     dump_scores,
-    seed_everything,
 )
 from src.eadro.base import BaseModel
 from src.eadro.config import Config
+from src.preprocessing.base import DataSample, DatasetMetadata
 
 
 class ChunkDataset(Dataset):
-    def __init__(self, chunks: dict, node_num: int, edges: list):
-        self.data = []
-        self.idx2id = {}
+    def __init__(self, samples: List[DataSample], metadata: DatasetMetadata):
+        self.samples = samples
+        self.metadata = metadata
+        self.node_num = len(metadata.services)
 
-        for idx, chunk_id in enumerate(chunks.keys()):
-            self.idx2id[idx] = chunk_id
-            chunk = chunks[chunk_id]
+        edges_src = []
+        edges_dst = []
+        for edge in metadata.service_calling_edges:
+            edges_src.append(edge[0])
+            edges_dst.append(edge[1])
 
-            # Fix graph construction to handle different edge formats
-            if (
-                isinstance(edges[0], list) and len(edges) == 2
-            ):  # Original format: [[src_nodes], [dst_nodes]]
-                graph = dgl.graph((edges[0], edges[1]), num_nodes=node_num)
-            elif (
-                isinstance(edges[0], list) and len(edges[0]) == 2
-            ):  # New format: [[src1,dst1], [src2,dst2], ...]
-                src_nodes, dst_nodes = zip(*edges)
-                graph = dgl.graph((src_nodes, dst_nodes), num_nodes=node_num)
-            else:
-                assert False, "Unsupported edge format"
-
-            graph.ndata["logs"] = torch.FloatTensor(chunk["logs"])
-            graph.ndata["metrics"] = torch.FloatTensor(chunk["metrics"])
-            graph.ndata["traces"] = torch.FloatTensor(chunk["traces"])
-
-            self.data.append((graph, chunk["culprit"]))
+        self.edges = (edges_src, edges_dst) if edges_src else ([], [])
 
     def __len__(self) -> int:
-        return len(self.data)
+        return len(self.samples)
 
-    def __getitem__(self, idx: int):
-        return self.data[idx]
+    def __getitem__(self, idx: int) -> Tuple[dgl.DGLGraph, int]:
+        sample = self.samples[idx]
 
-    def get_chunk_id(self, idx: int) -> str:
-        return self.idx2id[idx]
+        # Create DGL graph
+        assert len(self.edges) > 0, "Edges must be defined for the graph"
+        graph = dgl.graph(self.edges, num_nodes=self.node_num)
+
+        # Add node features
+        graph.ndata["logs"] = torch.FloatTensor(sample.log)
+        graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
+        graph.ndata["traces"] = torch.FloatTensor(sample.trace)
+
+        # Convert ground truth service to label
+        if sample.gt_service and sample.gt_service in self.metadata.service_name_to_id:
+            label = self.metadata.service_name_to_id[sample.gt_service]
+        else:
+            label = 0  # Default to first service if no ground truth
+
+        return graph, label
 
 
 def get_device(use_gpu: bool) -> torch.device:
@@ -63,13 +63,26 @@ def get_device(use_gpu: bool) -> torch.device:
     return torch.device("cpu")
 
 
-def collate_fn(batch):
+def collate_fn(
+    batch: List[Tuple[dgl.DGLGraph, int]],
+) -> Tuple[dgl.DGLGraph, torch.Tensor]:
     graphs, labels = map(list, zip(*batch))
+
+    # 调试：打印单个图的节点特征维度
+    print(f"Single graph nodes: {graphs[0].number_of_nodes()}")
+    print(f"Single graph 'logs' shape: {graphs[0].ndata['logs'].shape}")
+
     batched_graph = dgl.batch(graphs)
-    return batched_graph, torch.tensor(labels)
+
+    # 调试：打印批处理后的维度
+    print(f"Batched graph nodes: {batched_graph.number_of_nodes()}")
+    print(f"Batched graph 'logs' shape: {batched_graph.ndata['logs'].shape}")
+    print(f"Batch graph info: {batched_graph.batch_size} graphs in batch")
+
+    return batched_graph, torch.tensor(labels, dtype=torch.long)
 
 
-def setup_logging(log_file: Optional[str] = None):
+def setup_logging(log_file: Optional[str] = None) -> None:
     handlers: List[logging.Handler] = [logging.StreamHandler()]
     if log_file:
         handlers.append(logging.FileHandler(log_file))
@@ -81,45 +94,68 @@ def setup_logging(log_file: Optional[str] = None):
     )
 
 
-def load_data(config: Config) -> tuple:
-    chunks_dir = config.get("chunks_dir")
-    if chunks_dir is None:
-        raise ValueError("chunks_dir is not configured")
+def load_data(
+    config: Config,
+) -> Tuple[List[DataSample], List[DataSample], DatasetMetadata]:
+    """Load processed dataset samples and metadata"""
+    dataset_name = config.get("dataset", "tt")
 
-    data_dir = Path(chunks_dir)
+    # Load samples
+    samples_path = Path(f".cache/{dataset_name}_samples.pkl")
+    if not samples_path.exists():
+        raise FileNotFoundError(f"Samples file not found: {samples_path}")
 
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+    with open(samples_path, "rb") as f:
+        all_samples = pickle.load(f)
 
-    metadata_path = data_dir / "metadata.json"
-    if metadata_path.exists():
-        metadata = read_json(str(metadata_path))
-        if metadata is None:
-            raise ValueError("Failed to read metadata file")
-    else:
+    # Load metadata
+    metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
+    if not metadata_path.exists():
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
-    config.set("event_num", metadata["event_num"])
-    config.set("node_num", metadata["node_num"])
-    config.set("metric_num", metadata["metric_num"])
-    config.set("chunk_length", metadata["chunk_length"])
+    metadata = DatasetMetadata.from_pkl(str(metadata_path))
+    if metadata is None:
+        raise ValueError(f"Failed to load metadata from {metadata_path}")
 
-    train_chunks, test_chunks = load_chunks(str(data_dir))
+    # Split samples into train and test
+    train_ratio = config.get("train_ratio", 0.7)
+    if train_ratio is None:
+        train_ratio = 0.7
+    split_idx = int(len(all_samples) * train_ratio)
 
-    edges = metadata.get("edges", [])
+    train_samples = all_samples[:split_idx]
+    test_samples = all_samples[split_idx:]
 
-    return train_chunks, test_chunks, edges, metadata
+    logging.info(
+        f"Loaded {len(train_samples)} training samples and {len(test_samples)} test samples"
+    )
+    logging.info(f"Number of services: {len(metadata.services)}")
+    logging.info(f"Number of log templates: {len(metadata.log_templates)}")
+    logging.info(f"Number of metrics: {len(metadata.metrics)}")
+    logging.info(
+        f"Number of service calling edges: {len(metadata.service_calling_edges)}"
+    )
+
+    return train_samples, test_samples, metadata
 
 
 def create_data_loaders(
-    train_chunks: dict, test_chunks: dict, node_num: int, edges: list, config: Config
-) -> tuple:
-    train_dataset = ChunkDataset(train_chunks, node_num, edges)
-    test_dataset = ChunkDataset(test_chunks, node_num, edges)
+    train_samples: List[DataSample],
+    test_samples: List[DataSample],
+    metadata: DatasetMetadata,
+    config: Config,
+) -> Tuple[DataLoader, DataLoader]:
+    """Create data loaders for training and testing"""
+
+    train_dataset = ChunkDataset(train_samples, metadata)
+    test_dataset = ChunkDataset(test_samples, metadata)
+    import numpy as np
+
+    batch_size = 16
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=config.get("batch_size"),
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_fn,
         pin_memory=True,
@@ -127,7 +163,7 @@ def create_data_loaders(
 
     test_loader = DataLoader(
         test_dataset,
-        batch_size=config.get("batch_size"),
+        batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_fn,
         pin_memory=True,
@@ -136,35 +172,50 @@ def create_data_loaders(
     return train_loader, test_loader
 
 
-def train_model(config: Config, evaluation_epoch: int = 10) -> tuple:
-    random_seed = config.get("random_seed")
+def train_model(
+    config: Config, evaluation_epoch: int = 10
+) -> Tuple[Dict[str, Any], bool]:
+    random_seed = config.get("random_seed", 42)
     if random_seed is None:
-        raise ValueError("random_seed is not configured")
+        random_seed = 42
     seed_everything(random_seed)
 
-    gpu_config = config.get("gpu")
+    gpu_config = config.get("gpu", False)
     if gpu_config is None:
-        raise ValueError("gpu setting is not configured")
+        gpu_config = False
     device = get_device(gpu_config)
 
-    train_chunks, test_chunks, edges, metadata = load_data(config)
+    # Load data
+    train_samples, test_samples, metadata = load_data(config)
 
-    node_num = config.get("node_num")
-    if node_num is None:
-        raise ValueError("node_num is not configured")
+    # Update config with dataset-specific parameters
+    config.set("node_num", len(metadata.services))
+    config.set("event_num", len(metadata.log_templates) + 1)  # +1 for unknown templates
+    config.set("metric_num", len(metadata.metrics))
 
+    # Create data loaders
     train_loader, test_loader = create_data_loaders(
-        train_chunks, test_chunks, node_num, edges, config
+        train_samples, test_samples, metadata, config
     )
 
+    # Initialize model
     model = BaseModel(
         device=str(device),
         **config.to_dict(),
     )
 
+    # Train model
     scores, converge = model.fit(
         train_loader, test_loader, evaluation_epoch=evaluation_epoch
     )
+
+    # Handle None returns
+    if scores is None:
+        scores = {}
+    if converge is None:
+        converge = False
+    else:
+        converge = bool(converge)
 
     return scores, converge
 
@@ -177,9 +228,10 @@ def main(
     random_seed: int = typer.Option(42, help="Random seed"),
     gpu: bool = typer.Option(True, help="Use GPU"),
     epochs: int = typer.Option(50, help="Training epochs"),
-    batch_size: int = typer.Option(256, help="Batch size"),
-    lr: float = typer.Option(0.01, help="Learning rate"),
+    batch_size: int = typer.Option(32, help="Batch size"),
+    lr: float = typer.Option(0.001, help="Learning rate"),
     patience: int = typer.Option(10, help="Early stopping patience"),
+    train_ratio: float = typer.Option(0.7, help="Training data ratio"),
     lr_scheduler: str = typer.Option(
         "none", help="Learning rate scheduler: none, step, exponential, cosine, plateau"
     ),
@@ -203,14 +255,15 @@ def main(
     attn_head: int = typer.Option(4, help="Attention heads for GAT"),
     activation: float = typer.Option(0.2, help="LeakyReLU negative slope"),
     result_dir: str = typer.Option("result/", help="Result directory"),
-    chunks_dir: str = typer.Option("dataset_output", help="Chunks directory"),
-    dataset: str = typer.Option("rcabench", help="Dataset name"),
+    dataset: str = typer.Option("tt", help="Dataset name"),
     use_wandb: bool = typer.Option(True, help="Use Weights & Biases for logging"),
     wandb_project: str = typer.Option("eadro-training", help="W&B project name"),
     config_file: Optional[str] = typer.Option(
         None, "--config", help="Config file path"
     ),
-):
+) -> None:
+    """Train EADRO model on preprocessed dataset"""
+
     config_dict = {
         "random_seed": random_seed,
         "gpu": gpu,
@@ -218,6 +271,7 @@ def main(
         "batch_size": batch_size,
         "lr": lr,
         "patience": patience,
+        "train_ratio": train_ratio,
         "lr_scheduler": lr_scheduler,
         "lr_step_size": lr_step_size,
         "lr_gamma": lr_gamma,
@@ -237,11 +291,12 @@ def main(
         "attn_head": attn_head,
         "activation": activation,
         "result_dir": result_dir,
-        "chunks_dir": chunks_dir + "/" + dataset,
+        "dataset": dataset,
         "use_wandb": use_wandb,
         "wandb_project": wandb_project,
     }
 
+    # Initialize config
     if config_file and Path(config_file).exists():
         config = Config(config_file)
         for key, value in config_dict.items():
@@ -251,12 +306,14 @@ def main(
         for key, value in config_dict.items():
             config.set(key, value)
 
+    # Setup result directory
     result_dir_config = config.get("result_dir")
     if result_dir_config is None:
         raise ValueError("result_dir is not configured")
     result_dir_path = Path(result_dir_config)
     result_dir_path.mkdir(parents=True, exist_ok=True)
 
+    # Generate hash ID and setup logging
     hash_id = dump_params(config.to_dict())
     log_file = result_dir_path / hash_id / "running.log"
     setup_logging(str(log_file))

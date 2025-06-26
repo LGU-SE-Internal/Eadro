@@ -11,6 +11,14 @@
             "program": "create_dataset.py",
             "console": "integratedTerminal",
             "args": "--max-cases 5 --dataset rcabench"
+        },
+        {
+            "name": "train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train.py",
+            "console": "integratedTerminal",
+            "args": "--dataset sn"
         }
     ]
 }

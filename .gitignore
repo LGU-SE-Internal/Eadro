@@ -8,3 +8,5 @@ dataset_output
 wandb
 dataset_output_debug
 data
+.cache
+cache

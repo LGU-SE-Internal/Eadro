@@ -29,6 +29,7 @@ class GraphModel(nn.Module):
             attn_head: Number of attention heads
             activation: Negative slope for activation function
         """
+        self.attn_head = attn_head
         layers = []
 
         for i, hidden in enumerate(graph_hiddens):
@@ -66,7 +67,16 @@ class GraphModel(nn.Module):
             if out is None:
                 out = x
             out = layer(graph, out)
-            out = self.maxpool(out.permute(0, 2, 1)).permute(0, 2, 1).squeeze()
+            # GAT layer outputs [num_nodes, num_heads * out_feats]
+            # We need to handle multi-head attention properly
+            if out.dim() == 2:  # [num_nodes, num_heads * out_feats]
+                num_nodes, head_feat = out.shape
+                # Reshape to [num_nodes, num_heads, out_feats]
+                out = out.view(num_nodes, self.attn_head, -1)
+                # Apply maxpool over heads: [num_nodes, 1, out_feats] -> [num_nodes, out_feats]
+                out = self.maxpool(out.permute(0, 2, 1)).squeeze(2)
+            else:
+                out = self.maxpool(out.permute(0, 2, 1)).permute(0, 2, 1).squeeze()
         return self.pooling(graph, out)  # [bz*node, out_dim] --> [bz, out_dim]
 
 
@@ -91,7 +101,6 @@ class ConvNet(nn.Module):
         kernel_sizes: List[int],
         dilation: int = 2,
         dev: str = "cpu",
-        dropout: float = 0.0,
     ) -> None:
         super(ConvNet, self).__init__()
         layers = []
@@ -114,9 +123,6 @@ class ConvNet(nn.Module):
                 nn.ReLU(),
                 Chomp1d(padding),
             ]
-            # Add dropout after each layer except the last one
-            if dropout > 0.0 and i < len(kernel_sizes) - 1:
-                layers.append(nn.Dropout(dropout))
 
         self.network = nn.Sequential(*layers)
 
@@ -140,17 +146,30 @@ class ConvNet(nn.Module):
 class SelfAttention(nn.Module):
     """Self-attention mechanism module"""
 
-    def __init__(self, input_size: int, seq_len: int) -> None:
+    def __init__(self, input_size: int, seq_len: Optional[int] = None) -> None:
         """
         Args:
             input_size: Input size (hidden_size * num_directions)
-            seq_len: Sequence length (window_size)
+            seq_len: Sequence length (window_size) - if None, will be dynamically determined
         """
         super(SelfAttention, self).__init__()
-        self.atten_w = nn.Parameter(torch.randn(seq_len, input_size, 1))
-        self.atten_bias = nn.Parameter(torch.randn(seq_len, 1, 1))
-        self.glorot(self.atten_w)
-        self.atten_bias.data.fill_(0)
+        self.input_size = input_size
+        self.seq_len = seq_len  # Can be None for dynamic handling
+        
+        if seq_len is not None:
+            # Static initialization for known sequence length
+            self.atten_w = nn.Parameter(torch.randn(seq_len, input_size, 1))
+            self.atten_bias = nn.Parameter(torch.randn(seq_len, 1, 1))
+            self.glorot(self.atten_w)
+            self.atten_bias.data.fill_(0)
+            self.dynamic = False
+        else:
+            # Dynamic handling
+            self.atten_w = None
+            self.atten_bias = None
+            self.dynamic = True
+            # Use a linear layer for attention weights
+            self.attn_linear = nn.Linear(input_size, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -160,14 +179,31 @@ class SelfAttention(nn.Module):
         Returns:
             Weighted sum tensor
         """
-        input_tensor = x.transpose(1, 0)  # w x b x h
-        input_tensor = (
-            torch.bmm(input_tensor, self.atten_w) + self.atten_bias
-        )  # w x b x out
-        input_tensor = input_tensor.transpose(1, 0)
-        atten_weight = input_tensor.tanh()
-        weighted_sum = torch.bmm(atten_weight.transpose(1, 2), x).squeeze()
-        return weighted_sum
+        if self.dynamic:
+            # Dynamic attention computation
+            batch_size, seq_len, input_size = x.shape
+            
+            # Compute attention weights: [batch_size, seq_len, 1]
+            attn_weights = self.attn_linear(x)
+            attn_weights = torch.tanh(attn_weights)
+            attn_weights = torch.softmax(attn_weights, dim=1)
+            
+            # Apply attention: [batch_size, 1, seq_len] @ [batch_size, seq_len, input_size]
+            weighted_sum = torch.bmm(attn_weights.transpose(1, 2), x).squeeze(1)
+            return weighted_sum
+        else:
+            # Original static implementation
+            input_tensor = x.transpose(1, 0)  # w x b x h
+            if self.atten_w is not None and self.atten_bias is not None:
+                input_tensor = (
+                    torch.bmm(input_tensor, self.atten_w) + self.atten_bias
+                )  # w x b x out
+                input_tensor = input_tensor.transpose(1, 0)
+                atten_weight = input_tensor.tanh()
+                weighted_sum = torch.bmm(atten_weight.transpose(1, 2), x).squeeze()
+                return weighted_sum
+            else:
+                raise ValueError("Static attention weights not initialized")
 
     def glorot(self, tensor: Optional[torch.Tensor]) -> None:
         """Glorot initialization"""
@@ -197,26 +233,44 @@ class TraceModel(nn.Module):
             num_channels=trace_hiddens,
             kernel_sizes=trace_kernel_sizes,
             dev=device,
-            dropout=kwargs.get('trace_dropout', 0.0),
         )
 
         self.self_attn = self_attn
         if self_attn:
-            assert chunk_length is not None
-            self.attn_layer = SelfAttention(self.out_dim, chunk_length)
+            # Use dynamic attention that can handle variable sequence lengths
+            self.attn_layer = SelfAttention(self.out_dim, seq_len=None)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: Trace data tensor [batch_size, T, 1]
+            x: Trace data tensor [batch_size*node_num, feature_dim] or [batch_size, T, 1]
 
         Returns:
-            Processed features [batch_size, out_dim]
+            Processed features [batch_size*node_num, out_dim]
         """
-        hidden_states = self.net(x)
-        if self.self_attn:
-            return self.attn_layer(hidden_states)
-        return hidden_states[:, -1, :]  # [bz, out_dim]
+        # Check if input is 2D (flattened) and reshape if needed
+        if x.dim() == 2:
+            # If input is 2D, we need to reshape it to 3D for conv processing
+            # Assume the feature_dim represents the temporal sequence
+            batch_node_size, feature_dim = x.shape
+            # Reshape to [batch_node_size, feature_dim, 1] for conv1d input
+            x = x.unsqueeze(-1)  # [batch_node_size, feature_dim, 1]
+            x = x.permute(0, 2, 1)  # [batch_node_size, 1, feature_dim] for conv1d
+            
+            # Process through conv network
+            out = self.net.network(x)  # [batch_node_size, out_channels, feature_dim]
+            out = out.permute(0, 2, 1)  # [batch_node_size, feature_dim, out_channels]
+            
+            # Apply attention or take last timestep
+            if self.self_attn:
+                return self.attn_layer(out)
+            return out.mean(dim=1)  # Average over time dimension [batch_node_size, out_dim]
+        else:
+            # Original 3D processing
+            hidden_states = self.net(x)
+            if self.self_attn:
+                return self.attn_layer(hidden_states)
+            return hidden_states[:, -1, :]  # [bz, out_dim]
 
 
 class MetricModel(nn.Module):
@@ -243,27 +297,55 @@ class MetricModel(nn.Module):
             num_channels=metric_hiddens,
             kernel_sizes=metric_kernel_sizes,
             dev=device,
-            dropout=kwargs.get('metric_dropout', 0.0),
         )
 
         self.self_attn = self_attn
         if self_attn:
-            assert chunk_length is not None
-            self.attn_layer = SelfAttention(self.out_dim, chunk_length)
+            # Use dynamic attention that can handle variable sequence lengths
+            self.attn_layer = SelfAttention(self.out_dim, seq_len=None)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: Metric data tensor [batch_size, T, metric_num]
+            x: Metric data tensor [batch_size*node_num, feature_dim] or [batch_size, T, metric_num]
 
         Returns:
-            Processed features [batch_size, out_dim]
+            Processed features [batch_size*node_num, out_dim]
         """
-        assert x.shape[-1] == self.metric_num
-        hidden_states = self.net(x)
-        if self.self_attn:
-            return self.attn_layer(hidden_states)
-        return hidden_states[:, -1, :]  # [bz, out_dim]
+        # Check if input is 2D (flattened) and has wrong last dimension
+        if x.dim() == 2:
+            batch_node_size, feature_dim = x.shape
+            # If feature_dim matches expected metric_num, we have [batch_node_size, metric_num]
+            # We need to add a time dimension for processing
+            if feature_dim == self.metric_num:
+                # Add time dimension: [batch_node_size, 1, metric_num]
+                x = x.unsqueeze(1)
+                # Process through conv network
+                hidden_states = self.net(x)
+                # Take the single time step result
+                if self.self_attn:
+                    return self.attn_layer(hidden_states)
+                return hidden_states[:, 0, :]  # [batch_node_size, out_dim]
+            else:
+                # Assume feature_dim represents temporal dimension and metric_num=1
+                # Reshape to [batch_node_size, feature_dim, 1] then permute for conv1d
+                x = x.unsqueeze(-1)  # [batch_node_size, feature_dim, 1]
+                x = x.permute(0, 2, 1)  # [batch_node_size, 1, feature_dim]
+                
+                # Process through conv network directly
+                out = self.net.network(x)  # [batch_node_size, out_channels, feature_dim]
+                out = out.permute(0, 2, 1)  # [batch_node_size, feature_dim, out_channels]
+                
+                if self.self_attn:
+                    return self.attn_layer(out)
+                return out.mean(dim=1)  # Average over time dimension
+        else:
+            # Original 3D processing
+            assert x.shape[-1] == self.metric_num
+            hidden_states = self.net(x)
+            if self.self_attn:
+                return self.attn_layer(hidden_states)
+            return hidden_states[:, -1, :]  # [bz, out_dim]
 
 
 class LogModel(nn.Module):

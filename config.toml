@@ -1,0 +1,28 @@
+
+dataset = "sn"
+
+[datasets.sn]
+root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
+load_method = "all"
+log_files = ["log.parquet"]
+metric_files = ["metric.parquet"]
+trace_files = ["trace.parquet"]
+label_files = ["fault_info.json"]
+sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 1
+
+[datasets.tt]
+root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/TT_Dataset"
+load_method = "all"
+log_files = ["log.parquet"]
+metric_files = ["metric.parquet"]
+trace_files = ["trace.parquet"]
+label_files = ["fault_info.json"]
+sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 1
+
+
+[datasets.rcabench]
+root_path = "/mnt/jfs/rcabench_dataset"
+load_method = "database"
+sample_interval = 10                    # seconds. Means every sample is 10 seconds apart
