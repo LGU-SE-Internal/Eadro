@@ -1,0 +1,4 @@
+numpy
+tick
+flask
+requests
