@@ -18,6 +18,37 @@ from src.eadro.base import BaseModel
 from src.eadro.config import Config
 from src.preprocessing.base import DataSample, DatasetMetadata
 from typing import Counter
+import os
+import json
+# ========================
+def load_chunks(data_dir):
+    with open(os.path.join(data_dir, "chunk_train.pkl"), "rb") as fr:
+        chunk_train = pickle.load(fr)
+    with open(os.path.join(data_dir, "chunk_test.pkl"), "rb") as fr:
+        chunk_test = pickle.load(fr)
+    return chunk_train, chunk_test
+
+class OriginalDataset(Dataset):  # [node_num, T, else]
+    def __init__(self, chunks, node_num, edges):
+        self.data = []
+        self.idx2id = {}
+        for idx, chunk_id in enumerate(chunks.keys()):
+            self.idx2id[idx] = chunk_id
+            chunk = chunks[chunk_id]
+            graph = dgl.graph((edges[0], edges[1]), num_nodes=node_num)
+            graph.ndata["logs"] = torch.FloatTensor(chunk["logs"])
+            graph.ndata["metrics"] = torch.FloatTensor(chunk["metrics"])
+            graph.ndata["traces"] = torch.FloatTensor(chunk["traces"])
+            self.data.append((graph, chunk["culprit"]))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+    def __get_chunk_id__(self, idx):
+        return self.idx2id[idx]
 
 
 class ChunkDataset(Dataset):
@@ -171,6 +202,39 @@ def create_data_loaders(
     metadata: DatasetMetadata,
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
+    
+    # ============
+    train_chunks, test_chunks = load_chunks("/home/faydev/workspace/test/codes/chunks/TT")
+
+    with open(os.path.join("/home/faydev/workspace/test/codes/chunks/TT", "metadata.json"), "r") as fr:
+        metadata = json.load(fr)
+        
+    event_num, node_num, metric_num = (
+        metadata["event_num"],
+        metadata["node_num"],
+        metadata["metric_num"],
+    )
+    edges = metadata["edges"]
+    
+    train_data = OriginalDataset(train_chunks, node_num, edges)
+    test_data = OriginalDataset(test_chunks, node_num, edges)
+    train_dl = DataLoader(
+        train_data,
+        batch_size=256,
+        shuffle=True,
+        collate_fn=collate_fn,
+        pin_memory=True,
+    )
+    test_dl = DataLoader(
+        test_data,
+        batch_size=256,
+        shuffle=False,
+        collate_fn=collate_fn,
+        pin_memory=True,
+    )
+    
+    return train_dl, test_dl
+    # ============
     # Create datasets with shuffling for training data
     train_dataset = ChunkDataset(train_samples, metadata, shuffle=True)
     test_dataset = ChunkDataset(test_samples, metadata, shuffle=False)
@@ -245,9 +309,9 @@ def main(
             train_samples, test_samples, metadata, config
         )
         model = BaseModel(
-            event_num=config.get("event_num"),
-            metric_num=config.get("metric_num"),
-            node_num=config.get("node_num"),
+            event_num=60,#config.get("event_num"),
+            metric_num=7,#config.get("metric_num"),
+            node_num=27,#config.get("node_num"),
             device=str(device),
             config=config,
         )
