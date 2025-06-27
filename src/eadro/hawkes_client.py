@@ -4,14 +4,12 @@ Hawkes Process RPC Client
 This module provides a client for calling the Hawkes process modeling service.
 """
 
-import logging
 import time
 from typing import List, Optional, Dict, Any
 import numpy as np
 import requests
 from contextlib import contextmanager
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class HawkesRPCClient:

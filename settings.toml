@@ -1,0 +1,113 @@
+dataset = "tt"
+
+[datasets.sn]
+root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
+load_method = "all"
+log_files = ["log.parquet"]
+metric_files = ["metric.parquet"]
+trace_files = ["trace.parquet"]
+label_files = ["fault_info.json"]
+sample_interval = 30                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 10
+
+[datasets.tt]
+root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/TT_Dataset"
+load_method = "all"
+log_files = ["log.parquet"]
+metric_files = ["metric.parquet"]
+trace_files = ["trace.parquet"]
+label_files = ["fault_info.json"]
+sample_interval = 30                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 10
+
+
+[datasets.rcabench]
+root_path = "/mnt/jfs/rcabench_dataset"
+load_method = "database"
+sample_interval = 10                    # seconds. Means every sample is 10 seconds apart
+
+
+# Training configuration
+[training]
+random_seed = 42
+gpu = true
+epochs = 50
+batch_size = 256
+lr = 0.001
+patience = 10
+train_ratio = 0.7
+evaluation_epoch = 10
+
+# Learning rate scheduler configuration
+[training.lr_scheduler]
+type = "none"     # none, step, exponential, cosine, plateau
+step_size = 50
+gamma = 0.1
+warmup_epochs = 0
+min_lr = 1e-6
+
+# Model configuration
+[model]
+self_attn = true
+fuse_dim = 128
+alpha = 0.5      # Loss combination weight  
+log_dim = 64     # Log embedding dimension
+attn_head = 4    # Number of attention heads
+activation = 0.2 # LeakyReLU negative slope
+debug = false    # Debug mode
+
+# BaseModel specific parameters
+[model.base]
+result_dir = "result/"
+hash_id = ""
+use_wandb = true
+wandb_project = "eadro-training"
+
+# Model architecture - localization network
+[model.localization]
+hiddens = [64]
+
+# Model architecture - detection network  
+[model.detection]
+hiddens = [64]
+
+# Model architecture - trace processing
+[model.trace]
+kernel_sizes = [3, 3]
+hiddens = [20, 50]
+self_attn = false
+chunk_length = 30
+
+# Model architecture - metric processing
+[model.metric]
+kernel_sizes = [3, 3]
+hiddens = [64, 128]
+self_attn = false
+chunk_length = 30
+dropout = 0.0
+
+# Model architecture - graph processing
+[model.graph]
+hiddens = [64, 128]
+attn_drop = 0.0
+
+# Data processing configuration  
+[data]
+chunk_length = 30
+test_ratio = 0.3
+threshold = 1
+
+# Paths configuration
+[paths]
+data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
+result_dir = "result/"
+chunks_dir = "chunks/"
+cache_dir = ".cache/"
+
+# Weights & Biases configuration
+[wandb]
+enabled = true
+project = "eadro-training"
+entity = ""                # Set your W&B entity here
+tags = []
+notes = ""

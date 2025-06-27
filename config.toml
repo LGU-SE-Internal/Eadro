@@ -7,8 +7,8 @@ log_files = ["log.parquet"]
 metric_files = ["metric.parquet"]
 trace_files = ["trace.parquet"]
 label_files = ["fault_info.json"]
-sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
-sample_step = 1
+sample_interval = 30                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 10
 
 [datasets.tt]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/TT_Dataset"
@@ -17,8 +17,8 @@ log_files = ["log.parquet"]
 metric_files = ["metric.parquet"]
 trace_files = ["trace.parquet"]
 label_files = ["fault_info.json"]
-sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
-sample_step = 1
+sample_interval = 30                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 10
 
 
 [datasets.rcabench]

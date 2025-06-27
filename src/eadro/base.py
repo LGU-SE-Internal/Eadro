@@ -5,10 +5,10 @@ from typing import Dict, Any, Optional, Tuple
 
 import torch
 from torch import nn
-import logging
 import numpy as np
 from sklearn.metrics import ndcg_score
 import wandb
+from loguru import logger
 
 from .model import MainModel
 
@@ -22,19 +22,7 @@ class BaseModel(nn.Module):
         metric_num: int,
         node_num: int,
         device: str,
-        lr: float = 1e-3,
-        epochs: int = 50,
-        patience: int = 5,
-        result_dir: str = "./",
-        hash_id: Optional[str] = None,
-        use_wandb: bool = False,
-        wandb_project: str = "eadro-training",
-        lr_scheduler: str = "none",
-        lr_step_size: int = 50,
-        lr_gamma: float = 0.1,
-        lr_warmup_epochs: int = 0,
-        lr_min: float = 1e-6,
-        **kwargs: Any,
+        config: Any,
     ) -> None:
         """
         Initialize the base model for EADRO
@@ -44,56 +32,55 @@ class BaseModel(nn.Module):
             metric_num: Number of metrics
             node_num: Number of nodes
             device: Device to run on ("cpu" or "cuda")
-            lr: Learning rate
-            epochs: Number of training epochs
-            patience: Early stopping patience
-            result_dir: Directory to save results
-            hash_id: Experiment hash ID
-            use_wandb: Whether to use wandb for logging
-            wandb_project: Wandb project name
-            lr_scheduler: Type of learning rate scheduler ("none", "step", "exponential", "cosine", "plateau")
-            lr_step_size: Step size for StepLR scheduler
-            lr_gamma: Multiplicative factor for learning rate decay
-            lr_warmup_epochs: Number of warmup epochs
-            lr_min: Minimum learning rate for cosine scheduler
+            config: Configuration object
         """
         super(BaseModel, self).__init__()
 
-        self.epochs = epochs
-        self.lr = lr
-        self.patience = patience  # > 0: use early stop
+        # Get training parameters from config
+        self.epochs = config.get("training.epochs")
+        self.lr = config.get("training.lr")
+        self.patience = config.get("training.patience")
         self.device = device
-        self.use_wandb = use_wandb
+
+        # Get model base parameters from config
+        self.use_wandb = config.get("wandb.enabled")
 
         # Learning rate scheduler parameters
+        lr_scheduler = config.get("training.lr_scheduler.type")
         self.lr_scheduler_type = lr_scheduler.lower()
-        self.lr_step_size = lr_step_size
-        self.lr_gamma = lr_gamma
-        self.lr_warmup_epochs = lr_warmup_epochs
-        self.lr_min = lr_min
+        self.lr_step_size = config.get("training.lr_scheduler.step_size")
+        self.lr_gamma = config.get("training.lr_scheduler.gamma")
+        self.lr_warmup_epochs = config.get("training.lr_scheduler.warmup_epochs")
+        self.lr_min = config.get("training.lr_scheduler.min_lr")
+
+        # Model save directory
+        result_dir = config.get("paths.result_dir")
+        hash_id = config.get("model.base.hash_id")
 
         # Initialize wandb if requested
         if self.use_wandb:
+            wandb_project = config.get("wandb.project")
             wandb.init(
                 project=wandb_project,
                 name=f"run_{hash_id}" if hash_id else None,
                 config={
-                    "lr": lr,
-                    "epochs": epochs,
-                    "batch_size": kwargs.get("batch_size", "unknown"),
-                    "patience": patience,
-                    "alpha": kwargs.get("alpha", "unknown"),
+                    "lr": self.lr,
+                    "epochs": self.epochs,
+                    "batch_size": config.get("training.batch_size"),
+                    "patience": self.patience,
+                    "alpha": config.get("model.alpha"),
                     "event_num": event_num,
                     "metric_num": metric_num,
                     "node_num": node_num,
-                    **kwargs,
                 },
             )
 
         self.model_save_dir = (
             os.path.join(result_dir, hash_id) if hash_id else result_dir
         )
-        self.model = MainModel(event_num, metric_num, node_num, device, **kwargs)
+
+        # Create main model with config
+        self.model = MainModel(event_num, metric_num, node_num, device, config)
         self.model.to(device)
 
     def _create_lr_scheduler(self, optimizer) -> Optional[Any]:
@@ -125,7 +112,7 @@ class BaseModel(nn.Module):
                 optimizer, mode="min", factor=self.lr_gamma, patience=5
             )
         else:
-            logging.warning(
+            logger.warning(
                 f"Unknown scheduler type: {self.lr_scheduler_type}, using no scheduler"
             )
             return None
@@ -200,7 +187,7 @@ class BaseModel(nn.Module):
             eval_results["HR@" + str(j)] = hrs[j - 1] * 1.0 / pos
             eval_results["ndcg@" + str(j)] = ndcgs[j - 1] * 1.0 / pos
 
-        logging.info(
+        logger.info(
             "{} -- {}".format(
                 datatype,
                 ", ".join(
@@ -285,16 +272,7 @@ class BaseModel(nn.Module):
             # Get current learning rate
             current_lr = optimizer.param_groups[0]["lr"]
 
-            train_metrics = None
-            if epoch % 5 == 0 or epoch == 1:
-                train_metrics = self.evaluate(
-                    train_loader, datatype="Train", log_to_wandb=False
-                )
-                train_metrics_history.append(
-                    {"epoch": epoch, "metrics": train_metrics.copy()}
-                )
-
-            logging.info(
+            logger.info(
                 "Epoch {}/{}, training loss: {:.5f}, lr: {:.6f} [{:.2f}s]".format(
                     epoch, self.epochs, avg_epoch_loss, current_lr, epoch_time_elapsed
                 )
@@ -308,17 +286,13 @@ class BaseModel(nn.Module):
                     "epoch_time": epoch_time_elapsed,
                     "worse_count": worse_count,
                 }
-                if train_metrics:
-                    for metric, value in train_metrics.items():
-                        wandb_data[f"train_{metric}"] = value
-
                 wandb.log(wandb_data)
 
             # Early stopping mechanism
             if avg_epoch_loss > pre_loss:
                 worse_count += 1
                 if self.patience > 0 and worse_count >= self.patience:
-                    logging.info("Early stop at epoch: {}".format(epoch))
+                    logger.info("Early stop at epoch: {}".format(epoch))
                     break
             else:
                 worse_count = 0
@@ -350,13 +324,13 @@ class BaseModel(nn.Module):
                     self.save_model(best_state)
 
         if coverage and coverage > 5:
-            logging.info(
+            logger.info(
                 "* Best result got at epoch {} with HR@1: {:.4f}".format(
                     coverage, best_hr1
                 )
             )
         else:
-            logging.info("Unable to convergence!")
+            logger.info("Unable to convergence!")
 
         # Finish wandb run
         if self.use_wandb:

@@ -1,4 +1,3 @@
-import logging
 import pickle
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
@@ -6,6 +5,7 @@ import torch
 import dgl
 import typer
 from torch.utils.data import Dataset, DataLoader
+from loguru import logger
 
 from src.eadro.utils import (
     seed_everything,
@@ -57,9 +57,9 @@ class ChunkDataset(Dataset):
 
 def get_device(use_gpu: bool) -> torch.device:
     if use_gpu and torch.cuda.is_available():
-        logging.info("Using GPU...")
+        logger.info("Using GPU...")
         return torch.device("cuda")
-    logging.info("Using CPU...")
+    logger.info("Using CPU...")
     return torch.device("cpu")
 
 
@@ -68,26 +68,35 @@ def collate_fn(
 ) -> Tuple[dgl.DGLGraph, torch.Tensor]:
     graphs, labels = map(list, zip(*batch))
     batched_graph = dgl.batch(graphs)
-    return batched_graph, torch.tensor(labels, dtype=torch.long)
+    return batched_graph, torch.tensor(labels)
 
 
 def setup_logging(log_file: Optional[str] = None) -> None:
-    handlers: List[logging.Handler] = [logging.StreamHandler()]
-    if log_file:
-        handlers.append(logging.FileHandler(log_file))
+    """Setup loguru logger with optional file output"""
+    # Remove default handler first
+    logger.remove()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s P%(process)d %(levelname)s %(message)s",
-        handlers=handlers,
+    # Add console handler
+    logger.add(
+        lambda msg: print(msg, end=""),
+        format="{time:YYYY-MM-DD HH:mm:ss} P{process} {level} {message}",
+        level="INFO",
     )
+
+    # Add file handler if specified
+    if log_file:
+        logger.add(
+            log_file,
+            format="{time:YYYY-MM-DD HH:mm:ss} P{process} {level} {message}",
+            level="INFO",
+        )
 
 
 def load_data(
     config: Config,
 ) -> Tuple[List[DataSample], List[DataSample], DatasetMetadata]:
     """Load processed dataset samples and metadata"""
-    dataset_name = config.get("dataset", "tt")
+    dataset_name = config.get("dataset")
 
     # Load samples
     samples_path = Path(f".cache/{dataset_name}_samples.pkl")
@@ -107,21 +116,19 @@ def load_data(
         raise ValueError(f"Failed to load metadata from {metadata_path}")
 
     # Split samples into train and test
-    train_ratio = config.get("train_ratio", 0.7)
-    if train_ratio is None:
-        train_ratio = 0.7
+    train_ratio = config.get("training.train_ratio")
     split_idx = int(len(all_samples) * train_ratio)
 
     train_samples = all_samples[:split_idx]
     test_samples = all_samples[split_idx:]
 
-    logging.info(
+    logger.info(
         f"Loaded {len(train_samples)} training samples and {len(test_samples)} test samples"
     )
-    logging.info(f"Number of services: {len(metadata.services)}")
-    logging.info(f"Number of log templates: {len(metadata.log_templates)}")
-    logging.info(f"Number of metrics: {len(metadata.metrics)}")
-    logging.info(
+    logger.info(f"Number of services: {len(metadata.services)}")
+    logger.info(f"Number of log templates: {len(metadata.log_templates)}")
+    logger.info(f"Number of metrics: {len(metadata.metrics)}")
+    logger.info(
         f"Number of service calling edges: {len(metadata.service_calling_edges)}"
     )
 
@@ -134,13 +141,9 @@ def create_data_loaders(
     metadata: DatasetMetadata,
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
-    """Create data loaders for training and testing"""
-
     train_dataset = ChunkDataset(train_samples, metadata)
     test_dataset = ChunkDataset(test_samples, metadata)
-    import numpy as np
-
-    batch_size = 16
+    batch_size = config.get("training.batch_size")
 
     train_loader = DataLoader(
         train_dataset,
@@ -161,162 +164,69 @@ def create_data_loaders(
     return train_loader, test_loader
 
 
-def train_model(
-    config: Config, evaluation_epoch: int = 10
-) -> Tuple[Dict[str, Any], bool]:
-    random_seed = config.get("random_seed", 42)
-    if random_seed is None:
-        random_seed = 42
-    seed_everything(random_seed)
-
-    gpu_config = config.get("gpu", False)
-    if gpu_config is None:
-        gpu_config = False
-    device = get_device(gpu_config)
-
-    # Load data
-    train_samples, test_samples, metadata = load_data(config)
-
-    # Update config with dataset-specific parameters
-    config.set("node_num", len(metadata.services))
-    config.set("event_num", len(metadata.log_templates) + 1)  # +1 for unknown templates
-    config.set("metric_num", len(metadata.metrics))
-
-    # Create data loaders
-    train_loader, test_loader = create_data_loaders(
-        train_samples, test_samples, metadata, config
-    )
-
-    # Initialize model
-    model = BaseModel(
-        device=str(device),
-        **config.to_dict(),
-    )
-
-    # Train model
-    scores, converge = model.fit(
-        train_loader, test_loader, evaluation_epoch=evaluation_epoch
-    )
-
-    # Handle None returns
-    if scores is None:
-        scores = {}
-    if converge is None:
-        converge = False
-    else:
-        converge = bool(converge)
-
-    return scores, converge
-
-
 app = typer.Typer()
 
 
 @app.command()
 def main(
-    random_seed: int = typer.Option(42, help="Random seed"),
-    gpu: bool = typer.Option(True, help="Use GPU"),
-    epochs: int = typer.Option(50, help="Training epochs"),
-    batch_size: int = typer.Option(32, help="Batch size"),
-    lr: float = typer.Option(0.001, help="Learning rate"),
-    patience: int = typer.Option(10, help="Early stopping patience"),
-    train_ratio: float = typer.Option(0.7, help="Training data ratio"),
-    lr_scheduler: str = typer.Option(
-        "none", help="Learning rate scheduler: none, step, exponential, cosine, plateau"
-    ),
-    lr_step_size: int = typer.Option(50, help="Step size for StepLR scheduler"),
-    lr_gamma: float = typer.Option(0.1, help="Multiplicative factor for LR decay"),
-    lr_warmup_epochs: int = typer.Option(0, help="Number of warmup epochs"),
-    lr_min: float = typer.Option(
-        1e-5, help="Minimum learning rate for cosine scheduler"
-    ),
-    self_attn: bool = typer.Option(True, help="Use self attention"),
-    fuse_dim: int = typer.Option(128, help="Fusion dimension"),
-    alpha: float = typer.Option(0.5, help="Loss combination weight"),
-    locate_hiddens: List[int] = typer.Option([64], help="Localization hidden dims"),
-    detect_hiddens: List[int] = typer.Option([64], help="Detection hidden dims"),
-    log_dim: int = typer.Option(16, help="Log embedding dimension"),
-    trace_kernel_sizes: List[int] = typer.Option([2], help="Trace conv kernel sizes"),
-    trace_hiddens: List[int] = typer.Option([64], help="Trace hidden dimensions"),
-    metric_kernel_sizes: List[int] = typer.Option([2], help="Metric conv kernel sizes"),
-    metric_hiddens: List[int] = typer.Option([64], help="Metric hidden dimensions"),
-    graph_hiddens: List[int] = typer.Option([64], help="Graph hidden dimensions"),
-    attn_head: int = typer.Option(4, help="Attention heads for GAT"),
-    activation: float = typer.Option(0.2, help="LeakyReLU negative slope"),
-    result_dir: str = typer.Option("result/", help="Result directory"),
-    dataset: str = typer.Option("tt", help="Dataset name"),
-    use_wandb: bool = typer.Option(True, help="Use Weights & Biases for logging"),
-    wandb_project: str = typer.Option("eadro-training", help="W&B project name"),
     config_file: Optional[str] = typer.Option(
-        None, "--config", help="Config file path"
+        "settings.toml", "--config", help="Config file path"
     ),
+    dataset: Optional[str] = typer.Option(None, help="Dataset name override"),
+    epochs: Optional[int] = typer.Option(None, help="Training epochs override"),
+    batch_size: Optional[int] = typer.Option(None, help="Batch size override"),
+    lr: Optional[float] = typer.Option(None, help="Learning rate override"),
+    gpu: Optional[bool] = typer.Option(None, help="Use GPU override"),
+    result_dir: Optional[str] = typer.Option(None, help="Result directory override"),
 ) -> None:
-    """Train EADRO model on preprocessed dataset"""
+    config = Config(config_file)
 
-    config_dict = {
-        "random_seed": random_seed,
-        "gpu": gpu,
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "lr": lr,
-        "patience": patience,
-        "train_ratio": train_ratio,
-        "lr_scheduler": lr_scheduler,
-        "lr_step_size": lr_step_size,
-        "lr_gamma": lr_gamma,
-        "lr_warmup_epochs": lr_warmup_epochs,
-        "lr_min": lr_min,
-        "self_attn": self_attn,
-        "fuse_dim": fuse_dim,
-        "alpha": alpha,
-        "locate_hiddens": locate_hiddens,
-        "detect_hiddens": detect_hiddens,
-        "log_dim": log_dim,
-        "trace_kernel_sizes": trace_kernel_sizes,
-        "trace_hiddens": trace_hiddens,
-        "metric_kernel_sizes": metric_kernel_sizes,
-        "metric_hiddens": metric_hiddens,
-        "graph_hiddens": graph_hiddens,
-        "attn_head": attn_head,
-        "activation": activation,
-        "result_dir": result_dir,
+    overrides = {
         "dataset": dataset,
-        "use_wandb": use_wandb,
-        "wandb_project": wandb_project,
+        "training.epochs": epochs,
+        "training.batch_size": batch_size,
+        "training.lr": lr,
+        "training.gpu": gpu,
+        "paths.result_dir": result_dir,
     }
 
-    # Initialize config
-    if config_file and Path(config_file).exists():
-        config = Config(config_file)
-        for key, value in config_dict.items():
+    for key, value in overrides.items():
+        if value is not None:
             config.set(key, value)
-    else:
-        config = Config()
-        for key, value in config_dict.items():
-            config.set(key, value)
-
-    # Setup result directory
-    result_dir_config = config.get("result_dir")
-    if result_dir_config is None:
-        raise ValueError("result_dir is not configured")
-    result_dir_path = Path(result_dir_config)
-    result_dir_path.mkdir(parents=True, exist_ok=True)
-
-    # Generate hash ID and setup logging
-    hash_id = dump_params(config.to_dict())
-    log_file = result_dir_path / hash_id / "running.log"
-    setup_logging(str(log_file))
-
-    logging.info(f"Starting training with hash_id: {hash_id}")
-    logging.info(f"Configuration: {config.to_dict()}")
 
     try:
-        scores, converge = train_model(config)
-        dump_scores(config.get("result_dir"), hash_id, scores, converge)
-        logging.info(f"Training completed successfully. Hash ID: {hash_id}")
+        random_seed = config.get("training.random_seed")
+        seed_everything(random_seed)
+
+        gpu_config = config.get("training.gpu")
+        device = get_device(gpu_config)
+
+        evaluation_epoch = config.get("training.evaluation_epoch")
+
+        train_samples, test_samples, metadata = load_data(config)
+
+        config.set("node_num", len(metadata.services))
+        config.set("event_num", len(metadata.log_templates) + 1)
+        config.set("metric_num", len(metadata.metrics))
+
+        train_loader, test_loader = create_data_loaders(
+            train_samples, test_samples, metadata, config
+        )
+        model = BaseModel(
+            event_num=config.get("event_num"),
+            metric_num=config.get("metric_num"),
+            node_num=config.get("node_num"),
+            device=str(device),
+            config=config,
+        )
+        from pprint import pprint
+
+        pprint(model)
+
+        model.fit(train_loader, test_loader, evaluation_epoch=evaluation_epoch)
 
     except Exception as e:
-        logging.error(f"Training failed: {str(e)}")
+        logger.error(f"Training failed: {str(e)}")
         raise
 
 

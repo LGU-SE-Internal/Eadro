@@ -101,7 +101,7 @@ class DataSample:
 
 class BaseParser(ABC):
     @abstractmethod
-    def parse(self, datapack: str, **kwargs) -> Any:
+    def parse(self, *args, **kwargs) -> Any:
         pass
 
 

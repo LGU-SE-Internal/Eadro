@@ -24,12 +24,9 @@ WORKDIR /app
 
 RUN uv python install 3.12
 
-COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-install-project
-
+COPY . . 
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync
+    uv sync --locked
 
-CMD ["/bin/bash"]
+ENV PATH="/app/.venv/bin:$PATH"

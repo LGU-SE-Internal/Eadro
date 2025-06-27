@@ -1,5 +1,4 @@
 import os
-import logging
 import pickle
 import json
 import hashlib
@@ -16,6 +15,7 @@ from pprint import pformat
 import inspect
 import sys
 from enum import Enum, auto
+from loguru import logger
 
 
 class Dataset(Enum):
@@ -28,7 +28,7 @@ T = TypeVar("T")
 
 
 def load_chunks(data_dir):
-    logging.info("Load from {}".format(data_dir))
+    logger.info("Load from {}".format(data_dir))
     with open(os.path.join(data_dir, "chunk_train.pkl"), "rb") as fr:
         chunk_train = pickle.load(fr)
     with open(os.path.join(data_dir, "chunk_test.pkl"), "rb") as fr:
@@ -42,7 +42,7 @@ def read_json(filepath):
         with open(filepath, "r") as f:
             return json.loads(f.read())
     else:
-        logging.error("File path " + filepath + " not exists!")
+        logger.error("File path " + filepath + " not exists!")
         return
 
 
@@ -85,14 +85,20 @@ def dump_params(params):
     json_pretty_dump(params, os.path.join(result_dir, "params.json"))
 
     log_file = os.path.join(result_dir, "running.log")
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s P%(process)d %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
+    # Configure loguru logger
+    logger.remove()  # Remove default handler
+    logger.add(
+        lambda msg: print(msg, end=""),
+        format="{time:YYYY-MM-DD HH:mm:ss} P{process} {level} {message}",
+        level="INFO",
     )
+    logger.add(
+        log_file,
+        format="{time:YYYY-MM-DD HH:mm:ss} P{process} {level} {message}",
+        level="INFO",
+    )
+
     return hash_id
 
 
@@ -122,10 +128,10 @@ class CacheManager(Generic[T]):
         try:
             with open(self.cache_file, "rb") as f:
                 cache = pickle.load(f)
-            logging.info(f"Loaded {len(cache)} items from cache: {self.cache_file}")
+            logger.info(f"Loaded {len(cache)} items from cache: {self.cache_file}")
             return cache
         except (pickle.UnpicklingError, EOFError, Exception) as e:
-            logging.warning(
+            logger.warning(
                 f"Failed to load cache {self.cache_file}: {e}. Starting fresh."
             )
             return {}
@@ -136,11 +142,11 @@ class CacheManager(Generic[T]):
             try:
                 with open(self.cache_file, "wb") as f:
                     pickle.dump(self._cache, f)
-                logging.info(
+                logger.info(
                     f"Saved {len(self._cache)} items to cache: {self.cache_file}"
                 )
             except Exception as e:
-                logging.error(f"Failed to save cache {self.cache_file}: {e}")
+                logger.error(f"Failed to save cache {self.cache_file}: {e}")
 
     def get(self, key: str) -> Optional[T]:
         """Gets an item from the cache by key."""

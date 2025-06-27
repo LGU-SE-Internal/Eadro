@@ -5,17 +5,19 @@ Hawkes Process Modeling RPC Server using Python 3.8 and tick library.
 This service provides Hawkes process modeling functionality through a simple HTTP API.
 """
 
-import logging
 import traceback
 import numpy as np
 from flask import Flask, request, jsonify
 from tick.hawkes import HawkesADM4
+from loguru import logger
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Configure loguru logger
+logger.remove()  # Remove default handler
+logger.add(
+    lambda msg: print(msg, end=""),
+    format="{time:YYYY-MM-DD HH:mm:ss} - {name} - {level} - {message}",
+    level="INFO",
 )
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
