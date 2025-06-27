@@ -7,7 +7,6 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import ndcg_score
-import wandb
 from loguru import logger
 
 from .model import MainModel
@@ -42,9 +41,6 @@ class BaseModel(nn.Module):
         self.patience = config.get("training.patience")
         self.device = device
 
-        # Get model base parameters from config
-        self.use_wandb = config.get("wandb.enabled")
-
         # Learning rate scheduler parameters
         lr_scheduler = config.get("training.lr_scheduler.type")
         self.lr_scheduler_type = lr_scheduler.lower()
@@ -56,24 +52,6 @@ class BaseModel(nn.Module):
         # Model save directory
         result_dir = config.get("paths.result_dir")
         hash_id = config.get("model.base.hash_id")
-
-        # Initialize wandb if requested
-        if self.use_wandb:
-            wandb_project = config.get("wandb.project")
-            wandb.init(
-                project=wandb_project,
-                name=f"run_{hash_id}" if hash_id else None,
-                config={
-                    "lr": self.lr,
-                    "epochs": self.epochs,
-                    "batch_size": config.get("training.batch_size"),
-                    "patience": self.patience,
-                    "alpha": config.get("model.alpha"),
-                    "event_num": event_num,
-                    "metric_num": metric_num,
-                    "node_num": node_num,
-                },
-            )
 
         self.model_save_dir = (
             os.path.join(result_dir, hash_id) if hash_id else result_dir
@@ -130,24 +108,12 @@ class BaseModel(nn.Module):
             for param_group in optimizer.param_groups:
                 param_group["lr"] = warmup_lr
 
-    def evaluate(
-        self, test_loader: Any, datatype: str = "Test", log_to_wandb: bool = True
-    ) -> Dict[str, float]:
-        """
-        Evaluate model performance
-
-        Args:
-            test_loader: Test data loader
-            datatype: Data type identifier ("Test", "Train", "Val")
-            log_to_wandb: Whether to log metrics to wandb
-
-        Returns:
-            Dictionary containing various evaluation metrics
-        """
+    def evaluate(self, test_loader: Any, datatype: str = "Test") -> Dict[str, float]:
         self.model.eval()
         hrs, ndcgs = np.zeros(5), np.zeros(5)
         TP, FP, FN = 0, 0, 0  # True Positive, False Positive, False Negative
         batch_cnt, epoch_loss = 0, 0.0
+        total_case = 0
 
         with torch.no_grad():
             for graph, ground_truths in test_loader:
@@ -195,13 +161,6 @@ class BaseModel(nn.Module):
                 ),
             )
         )
-
-        if self.use_wandb and log_to_wandb:
-            wandb_metrics = {}
-            for k, v in eval_results.items():
-                wandb_metrics[f"{datatype.lower()}_{k}"] = v
-            wandb_metrics[f"{datatype.lower()}_loss"] = epoch_loss / batch_cnt
-            wandb.log(wandb_metrics)
 
         return eval_results
 
@@ -278,16 +237,6 @@ class BaseModel(nn.Module):
                 )
             )
 
-            if self.use_wandb:
-                wandb_data = {
-                    "epoch": epoch,
-                    "train_loss": avg_epoch_loss,
-                    "learning_rate": current_lr,
-                    "epoch_time": epoch_time_elapsed,
-                    "worse_count": worse_count,
-                }
-                wandb.log(wandb_data)
-
             # Early stopping mechanism
             if avg_epoch_loss > pre_loss:
                 worse_count += 1
@@ -331,10 +280,6 @@ class BaseModel(nn.Module):
             )
         else:
             logger.info("Unable to convergence!")
-
-        # Finish wandb run
-        if self.use_wandb:
-            wandb.finish()
 
         return eval_res, coverage
 

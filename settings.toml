@@ -7,8 +7,8 @@ log_files = ["log.parquet"]
 metric_files = ["metric.parquet"]
 trace_files = ["trace.parquet"]
 label_files = ["fault_info.json"]
-sample_interval = 30                                              # seconds. Means every sample is 10 seconds apart
-sample_step = 10
+sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
+sample_step = 1
 
 [datasets.tt]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/TT_Dataset"
@@ -17,7 +17,7 @@ log_files = ["log.parquet"]
 metric_files = ["metric.parquet"]
 trace_files = ["trace.parquet"]
 label_files = ["fault_info.json"]
-sample_interval = 30                                              # seconds. Means every sample is 10 seconds apart
+sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
 sample_step = 10
 
 
@@ -29,9 +29,9 @@ sample_interval = 10                    # seconds. Means every sample is 10 seco
 
 # Training configuration
 [training]
-random_seed = 42
+random_seed = 114514
 gpu = true
-epochs = 50
+epochs = 200
 batch_size = 256
 lr = 0.001
 patience = 10
@@ -40,9 +40,9 @@ evaluation_epoch = 10
 
 # Learning rate scheduler configuration
 [training.lr_scheduler]
-type = "none"     # none, step, exponential, cosine, plateau
-step_size = 50
-gamma = 0.1
+type = "step"     # none, step, exponential, cosine, plateau
+step_size = 10
+gamma = 0.99
 warmup_epochs = 0
 min_lr = 1e-6
 
@@ -60,7 +60,7 @@ debug = false    # Debug mode
 [model.base]
 result_dir = "result/"
 hash_id = ""
-use_wandb = true
+use_wandb = false
 wandb_project = "eadro-training"
 
 # Model architecture - localization network
@@ -76,14 +76,14 @@ hiddens = [64]
 kernel_sizes = [2]
 hiddens = [64]
 self_attn = true
-chunk_length = 30
+chunk_length = 10
 
 # Model architecture - metric processing
 [model.metric]
 kernel_sizes = [2]
 hiddens = [64]
 self_attn = true
-chunk_length = 30
+chunk_length = 10
 dropout = 0.0
 
 # Model architecture - graph processing
@@ -93,7 +93,7 @@ attn_drop = 0.0
 
 # Data processing configuration  
 [data]
-chunk_length = 30
+chunk_length = 10
 test_ratio = 0.3
 threshold = 1
 

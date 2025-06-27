@@ -6,23 +6,35 @@ import dgl
 import typer
 from torch.utils.data import Dataset, DataLoader
 from loguru import logger
+import random
 
 from src.eadro.utils import (
     seed_everything,
     dump_params,
     dump_scores,
 )
+from pprint import pprint
 from src.eadro.base import BaseModel
 from src.eadro.config import Config
 from src.preprocessing.base import DataSample, DatasetMetadata
+from typing import Counter
 
 
 class ChunkDataset(Dataset):
-    def __init__(self, samples: List[DataSample], metadata: DatasetMetadata):
-        self.samples = samples
+    def __init__(
+        self, samples: List[DataSample], metadata: DatasetMetadata, shuffle: bool = True
+    ):
         self.metadata = metadata
         self.node_num = len(metadata.services)
 
+        # Shuffle samples at initialization if requested
+        if shuffle:
+            samples = samples.copy()
+            random.shuffle(samples)
+
+        self.samples = samples
+
+        # Pre-build edges once
         edges_src = []
         edges_dst = []
         for edge in metadata.service_calling_edges:
@@ -31,28 +43,46 @@ class ChunkDataset(Dataset):
 
         self.edges = (edges_src, edges_dst) if edges_src else ([], [])
 
+        # Pre-load all graphs to improve training speed
+        logger.info(f"Pre-loading {len(samples)} graphs...")
+        self.graphs = []
+        self.labels = []
+
+        for sample in self.samples:
+            # Create DGL graph
+            assert len(self.edges) > 0, "Edges must be defined for the graph"
+            graph = dgl.graph(self.edges, num_nodes=self.node_num)
+
+            # Add node features
+            graph.ndata["logs"] = torch.FloatTensor(sample.log)
+            graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
+            graph.ndata["traces"] = torch.FloatTensor(sample.trace)
+
+            # Convert ground truth service to label
+            if (
+                sample.gt_service
+                and sample.gt_service in self.metadata.service_name_to_id
+            ):
+                label = self.metadata.service_name_to_id[sample.gt_service]
+            else:
+                label = -1  # Default to -1 if no ground truth
+
+            self.graphs.append(graph)
+            self.labels.append(label)
+
+        # count the labels distribution
+        label_counter = Counter(self.labels)
+        logger.info("Label distribution:")
+        for label, count in label_counter.items():
+            logger.info(f"Service {label}: {count} samples")
+
+        logger.info(f"Successfully pre-loaded {len(self.graphs)} graphs")
+
     def __len__(self) -> int:
-        return len(self.samples)
+        return len(self.graphs)
 
     def __getitem__(self, idx: int) -> Tuple[dgl.DGLGraph, int]:
-        sample = self.samples[idx]
-
-        # Create DGL graph
-        assert len(self.edges) > 0, "Edges must be defined for the graph"
-        graph = dgl.graph(self.edges, num_nodes=self.node_num)
-
-        # Add node features
-        graph.ndata["logs"] = torch.FloatTensor(sample.log)
-        graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
-        graph.ndata["traces"] = torch.FloatTensor(sample.trace)
-
-        # Convert ground truth service to label
-        if sample.gt_service and sample.gt_service in self.metadata.service_name_to_id:
-            label = self.metadata.service_name_to_id[sample.gt_service]
-        else:
-            label = 0  # Default to first service if no ground truth
-
-        return graph, label
+        return self.graphs[idx], self.labels[idx]
 
 
 def get_device(use_gpu: bool) -> torch.device:
@@ -141,8 +171,10 @@ def create_data_loaders(
     metadata: DatasetMetadata,
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
-    train_dataset = ChunkDataset(train_samples, metadata)
-    test_dataset = ChunkDataset(test_samples, metadata)
+    # Create datasets with shuffling for training data
+    train_dataset = ChunkDataset(train_samples, metadata, shuffle=True)
+    test_dataset = ChunkDataset(test_samples, metadata, shuffle=False)
+
     batch_size = config.get("training.batch_size")
 
     train_loader = DataLoader(
@@ -219,9 +251,6 @@ def main(
             device=str(device),
             config=config,
         )
-        from pprint import pprint
-
-        pprint(model)
 
         model.fit(train_loader, test_loader, evaluation_epoch=evaluation_epoch)
 

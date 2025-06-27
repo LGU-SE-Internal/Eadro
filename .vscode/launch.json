@@ -18,7 +18,6 @@
             "request": "launch",
             "program": "train.py",
             "console": "integratedTerminal",
-            "args": "--dataset sn"
         }
     ]
 }
