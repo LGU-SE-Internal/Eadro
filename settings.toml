@@ -50,7 +50,7 @@ min_lr = 1e-6
 [model]
 self_attn = true
 fuse_dim = 128
-alpha = 0.1      # Loss combination weight  
+alpha = 0.01     # Loss combination weight  
 log_dim = 16     # Log embedding dimension
 attn_head = 4    # Number of attention heads
 activation = 0.2 # LeakyReLU negative slope
