@@ -50,8 +50,8 @@ min_lr = 1e-6
 [model]
 self_attn = true
 fuse_dim = 128
-alpha = 0.5      # Loss combination weight  
-log_dim = 64     # Log embedding dimension
+alpha = 0.1      # Loss combination weight  
+log_dim = 16     # Log embedding dimension
 attn_head = 4    # Number of attention heads
 activation = 0.2 # LeakyReLU negative slope
 debug = false    # Debug mode
@@ -73,22 +73,22 @@ hiddens = [64]
 
 # Model architecture - trace processing
 [model.trace]
-kernel_sizes = [3, 3]
-hiddens = [20, 50]
-self_attn = false
+kernel_sizes = [2]
+hiddens = [64]
+self_attn = true
 chunk_length = 30
 
 # Model architecture - metric processing
 [model.metric]
-kernel_sizes = [3, 3]
-hiddens = [64, 128]
-self_attn = false
+kernel_sizes = [2]
+hiddens = [64]
+self_attn = true
 chunk_length = 30
 dropout = 0.0
 
 # Model architecture - graph processing
 [model.graph]
-hiddens = [64, 128]
+hiddens = [64]
 attn_drop = 0.0
 
 # Data processing configuration  

@@ -402,14 +402,14 @@ class MainModel(nn.Module):
         self.detector = FullyConnected(self.encoder.feat_out_dim, 2, detect_hiddens).to(
             device
         )
-        self.detector_criterion = nn.CrossEntropyLoss()
+        self.decoder_criterion = nn.CrossEntropyLoss()
 
         # Fault localizer (multi-classification: which node is faulty)
         locate_hiddens = config.get("model.localization.hiddens")
-        self.localizer = FullyConnected(
+        self.locator = FullyConnected(
             self.encoder.feat_out_dim, node_num, locate_hiddens
         ).to(device)
-        self.localizer_criterion = nn.CrossEntropyLoss(ignore_index=-1)
+        self.locator_criterion = nn.CrossEntropyLoss(ignore_index=-1)
         self.get_prob = nn.Softmax(dim=-1)
 
     def forward(self, graph: Any, ground_truth: torch.Tensor) -> Dict[str, Any]:
@@ -436,14 +436,14 @@ class MainModel(nn.Module):
             y_anomaly[i] = int(ground_truth[i] > -1)
 
         # Fault localization
-        locate_logits = self.localizer(embeddings)
-        locate_loss = self.localizer_criterion(
+        locate_logits = self.locator(embeddings)
+        locate_loss = self.locator_criterion(
             locate_logits, ground_truth.to(self.device)
         )
 
         # Anomaly detection
         detect_logits = self.detector(embeddings)
-        detect_loss = self.detector_criterion(detect_logits, y_anomaly)
+        detect_loss = self.decoder_criterion(detect_logits, y_anomaly)
 
         # Total loss
         loss = self.alpha * detect_loss + (1 - self.alpha) * locate_loss
