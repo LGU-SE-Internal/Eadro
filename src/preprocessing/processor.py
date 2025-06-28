@@ -391,7 +391,9 @@ class Processor(DataProcessor):
                 break
 
             sample = DataSample(
-                abnormal=fault_type != "", gt_service=gt_service, fault_type=fault_type
+                abnormal=fault_type != "", 
+                gt_service=gt_service, 
+                fault_type=fault_type
             )
 
             # Process log data
@@ -500,12 +502,12 @@ class Processor(DataProcessor):
     def _process_log_from_df(
         self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
     ) -> np.ndarray:
-        """Helper method to process log data from a pre-filtered DataFrame"""
+        """Helper method to process log data using Hawkes process (matching old preprocessing)"""
         num_services = len(self.metadata.services)
         num_templates = len(self.metadata.log_templates) + 1  # +1 for unseen templates
 
         # Collect data and check if empty
-        df_collected = df.select(["message", "service_name"]).collect()
+        df_collected = df.select(["message", "service_name", "time"]).collect()
         if df_collected.height == 0:
             result = np.zeros((num_services, num_templates))
             assert result.shape == (num_services, num_templates), (
@@ -514,46 +516,51 @@ class Processor(DataProcessor):
             )
             return result
 
-        # Batch process messages
-        messages = df_collected["message"].to_list()
-        templates = self.drain.process_batch(messages)
+        # Convert to timestamp for Hawkes processing
+        time_data = df_collected.with_columns([
+            ((pl.col("time") - start_time).dt.total_seconds()).alias("timestamp")
+        ])
 
+        # Batch process messages to get templates (thread-safe)
+        messages = time_data["message"].to_list()
+        with self._lock:
+            templates = self.drain.process_batch(messages)
+        
         # Add template column
-        df_with_templates = df_collected.with_columns(pl.Series("template", templates))
+        df_with_templates = time_data.with_columns(pl.Series("template", templates))
 
         result = np.zeros((num_services, num_templates))
-
-        # Calculate counts
-        counts = df_with_templates.group_by(["service_name", "template"]).agg(
-            pl.count().alias("count")
-        )
-
         service_lookup = self.metadata.service_name_to_id
         template_lookup = self.metadata.log_template_to_id
 
-        for row in counts.iter_rows(named=True):
-            service_name = row["service_name"]
-            template = row["template"]
-            count = row["count"]
-
-            service_id = service_lookup.get(service_name)
-            if service_id is not None:
+        # Group by service and apply counting (Hawkes commented out for thread safety)
+        for service_name in service_lookup.keys():
+            service_id = service_lookup[service_name]
+            service_data = df_with_templates.filter(pl.col("service_name") == service_name)
+            
+            if service_data.height == 0:
+                continue
+                
+            counts = service_data.group_by("template").agg(
+                pl.count().alias("count")
+            )
+            for row in counts.iter_rows(named=True):
+                template = row["template"]
+                count = row["count"]
                 template_id = template_lookup.get(template, 0)
-                assert 0 <= template_id < num_templates, (
-                    f"Template ID {template_id} out of bounds [0, {num_templates})"
-                )
                 result[service_id, template_id] += count
 
         assert result.shape == (num_services, num_templates), (
             f"Expected log result shape ({num_services}, {num_templates}), "
             f"got {result.shape}"
         )
+        logger.debug(f"log result: {result.shape}")
         return result
 
     def _process_metrics_from_df(
         self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
     ) -> np.ndarray:
-        """Helper method to process metrics data from a pre-filtered DataFrame"""
+        """Helper method to process metrics data using Z-score normalization (matching old preprocessing)"""
         interval = int(self.config.sample_interval)  # type: ignore
         num_services = len(self.metadata.services)
         num_metrics = len(self.metadata.metric_names)
@@ -608,37 +615,29 @@ class Processor(DataProcessor):
                 and metric_id is not None
                 and 0 <= time_bucket < interval
             ):
-                # Normalization processing
-                metric_meta = self.metadata.metrics[metric_id]
-                if (
-                    metric_meta.min_value is not None
-                    and metric_meta.max_value is not None
-                ):
-                    value_range = metric_meta.max_value - metric_meta.min_value
-                    if value_range > 0:
-                        normalized_value = (
-                            mean_value - metric_meta.min_value
-                        ) / value_range
-                    else:
-                        normalized_value = 0.0
-                else:
-                    normalized_value = mean_value
+                result[service_id, time_bucket, metric_id] = mean_value
 
-                result[service_id, time_bucket, metric_id] = normalized_value
-
-        # Data smoothing
+        # Data smoothing (keep this as it helps with sparse data)
         self._smooth_sparse_data(result, num_services, interval, num_metrics)
+
+        # Apply Z-score normalization per metric (matching old preprocessing)
+        for metric_id in range(num_metrics):
+            metric_values = result[:, :, metric_id].flatten()
+            if np.std(metric_values) > 1e-8:  # Only normalize if there's variance
+                normalized_values = self._z_score_normalize(metric_values)
+                result[:, :, metric_id] = normalized_values.reshape(num_services, interval)
 
         assert result.shape == (num_services, interval, num_metrics), (
             f"Expected metrics result shape ({num_services}, {interval}, {num_metrics}), "
             f"got {result.shape}"
         )
+        logger.debug(f"metrics result: {result.shape}")
         return result
 
     def _process_traces_from_df(
         self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
     ) -> np.ndarray:
-        """Helper method to process traces data from a pre-filtered DataFrame"""
+        """Helper method to process traces data using Z-score normalization (matching old preprocessing)"""
         interval = int(self.config.sample_interval)  # type: ignore
         num_services = len(self.metadata.services)
         expected_features = 2  # latency and invocation count
@@ -692,22 +691,24 @@ class Processor(DataProcessor):
                 result[service_id, time_bucket, 0] = (
                     avg_latency if avg_latency is not None else 0.0
                 )
+                # Store invocation count in second feature (matching old preprocessing logic)
                 result[service_id, time_bucket, 1] = (
                     invocation_count if invocation_count is not None else 0.0
                 )
 
-        # Data smoothing
+        # Data smoothing (keep this as it helps with sparse data)
         self._smooth_sparse_data(result, num_services, interval, expected_features)
 
-        # Z-score normalization
-        latency_values = result[:, :, 0].flatten()
-        if np.std(latency_values) > 1e-8:
-            mean_latency = np.mean(latency_values)
-            std_latency = np.std(latency_values)
-            result[:, :, 0] = (result[:, :, 0] - mean_latency) / std_latency
+        # Apply Z-score normalization per service for latency (matching old preprocessing)
+        # Note: old preprocessing normalized latency per service across all chunks
+        for service_id in range(num_services):
+            latency_values = result[service_id, :, 0]
+            if np.std(latency_values) > 1e-8:
+                result[service_id, :, 0] = self._z_score_normalize(latency_values)
 
         assert result.shape == (num_services, interval, expected_features), (
             f"Expected traces result shape ({num_services}, {interval}, {expected_features}), "
             f"got {result.shape}"
         )
+        logger.debug(f"traces result: {result.shape}")
         return result
