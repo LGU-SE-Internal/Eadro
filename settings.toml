@@ -41,11 +41,11 @@ sample_step = 1
 random_seed = 114514
 gpu = true
 epochs = 200
-batch_size = 256
+batch_size = 16
 lr = 0.001
 patience = 10
-train_ratio = 0.7
-evaluation_epoch = 10
+train_ratio = 0.9
+evaluation_epoch = 5
 
 # Learning rate scheduler configuration
 [training.lr_scheduler]
