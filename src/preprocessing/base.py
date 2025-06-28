@@ -97,6 +97,13 @@ class DataSample:
     log: np.ndarray = field(default_factory=lambda: np.array([]))
     trace: np.ndarray = field(default_factory=lambda: np.array([]))
     metric: np.ndarray = field(default_factory=lambda: np.array([]))
+    
+    # Add computed property for service ID (similar to old preprocessing culprit field)
+    def get_gt_service_id(self, service_name_to_id: dict) -> int:
+        """Get ground truth service ID, return -1 if not found or no fault"""
+        if not self.abnormal or not self.gt_service:
+            return -1
+        return service_name_to_id.get(self.gt_service, -1)
 
 
 class BaseParser(ABC):

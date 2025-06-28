@@ -129,9 +129,7 @@ class HawkesRPCClient:
                     if data.get("success"):
                         baseline = self._deserialize_data(data["baseline"])
                         method = data.get("method", "unknown")
-                        logger.debug(
-                            f"Hawkes modeling successful using method: {method}"
-                        )
+
                         return baseline
                     else:
                         logger.error(f"Hawkes modeling failed: {data.get('error')}")

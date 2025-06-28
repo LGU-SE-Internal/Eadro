@@ -7,6 +7,7 @@ import typer
 from torch.utils.data import Dataset, DataLoader
 from loguru import logger
 import random
+from collections import defaultdict
 
 from src.eadro.utils import (
     seed_everything,
@@ -59,13 +60,7 @@ class ChunkDataset(Dataset):
             graph.ndata["traces"] = torch.FloatTensor(sample.trace)
 
             # Convert ground truth service to label
-            if (
-                sample.gt_service
-                and sample.gt_service in self.metadata.service_name_to_id
-            ):
-                label = self.metadata.service_name_to_id[sample.gt_service]
-            else:
-                label = -1  # Default to -1 if no ground truth
+            label = sample.get_gt_service_id(self.metadata.service_name_to_id)
 
             self.graphs.append(graph)
             self.labels.append(label)
@@ -145,16 +140,79 @@ def load_data(
     if metadata is None:
         raise ValueError(f"Failed to load metadata from {metadata_path}")
 
-    # Split samples into train and test
-    train_ratio = config.get("training.train_ratio")
-    split_idx = int(len(all_samples) * train_ratio)
+    # Group samples by label (stratified sampling)
+    label_to_samples = defaultdict(list)
+    for sample in all_samples:
+        label = sample.get_gt_service_id(metadata.service_name_to_id)
+        label_to_samples[label].append(sample)
+    
+    # Log label distribution before balancing
+    logger.info("Original label distribution:")
+    for label, samples in label_to_samples.items():
+        logger.info(f"Service {label}: {len(samples)} samples")
 
-    train_samples = all_samples[:split_idx]
-    test_samples = all_samples[split_idx:]
+    # Balance the dataset by downsampling label -1 to match other classes
+    if -1 in label_to_samples:
+        # Find the minimum count among non-(-1) labels
+        non_negative_counts = [len(samples) for label, samples in label_to_samples.items() if label != -1]
+        if non_negative_counts:
+            min_count = min(non_negative_counts)
+            
+            # Downsample label -1 to match the minimum count
+            negative_samples = label_to_samples[-1].copy()
+            random.shuffle(negative_samples)
+            label_to_samples[-1] = negative_samples[:min_count]
+            
+            logger.info(f"Downsampled label -1 from {len(negative_samples)} to {min_count} samples")
+
+    # Log balanced distribution
+    logger.info("Balanced label distribution:")
+    for label, samples in label_to_samples.items():
+        logger.info(f"Service {label}: {len(samples)} samples")
+
+    # Split each label's samples into train and test
+    train_ratio = config.get("training.train_ratio")
+    train_samples = []
+    test_samples = []
+    
+    for label, samples in label_to_samples.items():
+        # Shuffle samples for this label
+        label_samples = samples.copy()
+        random.shuffle(label_samples)
+        
+        # Split this label's samples
+        split_idx = int(len(label_samples) * train_ratio)
+        train_samples.extend(label_samples[:split_idx])
+        test_samples.extend(label_samples[split_idx:])
+    
+    # Shuffle final train and test sets
+    random.shuffle(train_samples)
+    random.shuffle(test_samples)
 
     logger.info(
         f"Loaded {len(train_samples)} training samples and {len(test_samples)} test samples"
     )
+    
+    # Log final distribution for verification
+    train_label_counts = defaultdict(int)
+    test_label_counts = defaultdict(int)
+    
+    for sample in train_samples:
+        label = sample.get_gt_service_id(metadata.service_name_to_id)
+        train_label_counts[label] += 1
+    
+    for sample in test_samples:
+        label = sample.get_gt_service_id(metadata.service_name_to_id)
+        test_label_counts[label] += 1
+    
+    logger.info("Training set label distribution:")
+    for label, count in train_label_counts.items():
+        logger.info(f"Service {label}: {count} samples")
+    
+    logger.info("Test set label distribution:")
+    for label, count in test_label_counts.items():
+        logger.info(f"Service {label}: {count} samples")
+
     logger.info(f"Number of services: {len(metadata.services)}")
     logger.info(f"Number of log templates: {len(metadata.log_templates)}")
     logger.info(f"Number of metrics: {len(metadata.metrics)}")

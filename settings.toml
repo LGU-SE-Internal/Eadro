@@ -18,7 +18,7 @@ metric_files = ["metric.parquet"]
 trace_files = ["trace.parquet"]
 label_files = ["fault_info.json"]
 sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
-sample_step = 10
+sample_step = 1
 
 
 [datasets.rcabench]
