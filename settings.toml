@@ -33,25 +33,33 @@ metric_files = [
 ]
 trace_files = ["abnormal_traces.parquet", "normal_traces.parquet"]
 label_files = ["injection.json", "env.json"]
-sample_interval = 60
-sample_step = 1
+sample_interval = 30
+sample_step = 5
 
 # Training configuration
 [training]
-random_seed = 114514
+random_seed = 123
 gpu = true
 epochs = 200
-batch_size = 16
-lr = 0.001
+batch_size = 64
+lr = 0.01
 patience = 10
 train_ratio = 0.9
 evaluation_epoch = 5
+
+# Experiment management
+[experiment]
+checkpoint_frequency = 5      # Save checkpoint every N epochs
+auto_cleanup = true           # Automatically cleanup old checkpoints
+keep_best_checkpoints = 3     # Number of best checkpoints to keep
+keep_recent_checkpoints = 5   # Number of recent checkpoints to keep
+save_inference_results = true # Save inference results automatically
 
 # Learning rate scheduler configuration
 [training.lr_scheduler]
 type = "step"     # none, step, exponential, cosine, plateau
 step_size = 10
-gamma = 0.99
+gamma = 0.9
 warmup_epochs = 0
 min_lr = 1e-6
 
@@ -64,7 +72,7 @@ log_dim = 16      # Log embedding dimension
 attn_head = 4     # Number of attention heads
 activation = 0.2  # LeakyReLU negative slope
 debug = false     # Debug mode
-chunk_length = 60
+chunk_length = 30
 
 # BaseModel specific parameters
 [model.base]
@@ -105,11 +113,3 @@ data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
 result_dir = "result/"
 chunks_dir = "chunks/"
 cache_dir = ".cache/"
-
-# Weights & Biases configuration
-[wandb]
-enabled = true
-project = "eadro-training"
-entity = ""                # Set your W&B entity here
-tags = []
-notes = ""

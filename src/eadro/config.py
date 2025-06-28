@@ -5,7 +5,6 @@ from dynaconf import Dynaconf  # type: ignore
 
 
 def _get_settings() -> Dynaconf:
-    """Initialize and return Dynaconf settings object"""
     config_dir = Path(__file__).parent.parent.parent
 
     return Dynaconf(
@@ -25,20 +24,7 @@ settings = _get_settings()
 
 
 class Config:
-    """
-    Simple configuration wrapper for backward compatibility.
-
-    This provides a minimal interface that maintains compatibility
-    with existing code while using Dynaconf underneath.
-    """
-
     def __init__(self, config_file: Optional[str] = None):
-        """
-        Initialize configuration.
-
-        Args:
-            config_file: Optional path to additional config file
-        """
         self._settings = settings
 
         if config_file and Path(config_file).exists():
