@@ -23,6 +23,10 @@ from functools import lru_cache
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import pytz
+from rcabench.openapi import InjectionApi, ApiClient, Configuration
+import random
+
 
 class Processor(DataProcessor):
     def __init__(self, parsers: dict[str, BaseParser], conf: str = "config.toml"):
@@ -37,14 +41,15 @@ class Processor(DataProcessor):
         self._file_cache = {}
         self._lock = threading.Lock()  # Add thread safety for shared resources
 
+        self.datapack_dir = self.config.root_path  # type: ignore
+        assert isinstance(self.datapack_dir, str)
+        assert self.datapack_dir != ""
+        self.datapack_path = Path(self.datapack_dir)
+        assert self.datapack_path.exists()
+        assert self.datapack_path.is_dir()
+
         pl.Config.set_streaming_chunk_size(50000)
         pl.Config.set_tbl_rows(20)
-    
-    def _z_score_normalize(self, x: np.ndarray) -> np.ndarray:
-        """Z-score normalization matching the old preprocessing method"""
-        mean_val = np.mean(x)
-        std_val = np.std(x)
-        return (x - mean_val) / (std_val + 1e-8)
 
     @lru_cache(maxsize=128)
     def _get_file_schema(self, file_path: str) -> dict:
@@ -59,22 +64,71 @@ class Processor(DataProcessor):
         assert config_path != "", "Config path cannot be empty."
         return Dynaconf(settings_files=[config_path])
 
+    def _validate_datapack(self, pack: Path) -> bool:
+        if not (pack.exists() and pack.is_dir()):
+            logger.warning(
+                f"Datapack {pack} does not exist or is not a directory. Skipping."
+            )
+            return False
+
+        missing_files = []
+
+        for metric_file in self.metric_files:
+            if not (pack / metric_file).exists():
+                missing_files.append(f"metric file: {metric_file}")
+
+        for log_file in self.log_files:
+            if not (pack / log_file).exists():
+                missing_files.append(f"log file: {log_file}")
+
+        for trace_file in self.trace_files:
+            if not (pack / trace_file).exists():
+                missing_files.append(f"trace file: {trace_file}")
+
+        if missing_files:
+            logger.warning(
+                f"Datapack {pack} is missing files: {', '.join(missing_files)}. Skipping."
+            )
+            return False
+
+        return True
+
     def _load_datapacks(self, dataset) -> list[Path]:
-        datapack_dir = self.config.root_path  # type: ignore
-        assert isinstance(datapack_dir, str), (
-            f"Datapack directory for {dataset} should be a string, got {type(datapack_dir)}."
+        packs = []
+        if self.config.load_method == "database":  # type: ignore
+            packs = self._load_datapacks_from_db(dataset)
+        elif self.config.load_method == "all":  # type: ignore
+            packs = [dp for dp in self.datapack_path.iterdir() if dp.is_dir()]
+        else:
+            raise ValueError(
+                f"Unsupported load method: {self.config.load_method}. "  # type: ignore
+                "Supported methods are 'database' and 'all'."
+            )
+
+        valid_packs = []
+        for pack in packs:
+            if self._validate_datapack(pack):
+                valid_packs.append(pack)
+
+        if not valid_packs:
+            raise ValueError("No valid datapacks found after validation.")
+
+        logger.info(
+            f"Loaded {len(valid_packs)} valid datapacks out of {len(packs)} total."
         )
-        assert datapack_dir != "", (
-            f"Datapack directory for {dataset} is not set in the config."
+        return valid_packs
+
+    def _load_datapacks_from_db(self, dataset: str) -> list[Path]:
+        config = Configuration(host="http://10.10.10.220:32080")
+        with ApiClient(configuration=config) as client:
+            api = InjectionApi(api_client=client)
+            resp = api.api_v1_injections_analysis_with_issues_get()
+
+        assert resp.data is not None, "No cases found in the response"
+        case_names = list(
+            set([item.injection_name for item in resp.data if item.injection_name])
         )
-        datapack_path = Path(datapack_dir)
-        assert datapack_path.exists(), (
-            f"Datapack directory {datapack_path} does not exist."
-        )
-        assert datapack_path.is_dir(), (
-            f"Datapack directory {datapack_path} is not a directory."
-        )
-        return [dp for dp in datapack_path.iterdir() if dp.is_dir()]
+        return sorted([self.datapack_path / name / "converted" for name in case_names])
 
     def process_dataset(self):
         """
@@ -86,20 +140,20 @@ class Processor(DataProcessor):
            2.4 load ground truth (labels)
         3. split to chunks(each chunk is the data within a certain time range, will be used for training/testing)
         """
-        self.datapacks = self._load_datapacks(self.dataset)
         self.derive_files()
+        self.datapacks = self._load_datapacks(self.dataset)
         self.metadata = self.create_metadata()
 
         samples: list[DataSample] = []
-        
+
         # Use ThreadPoolExecutor for parallel processing
         with ThreadPoolExecutor(max_workers=8) as executor:
             # Submit all datapack processing tasks
             future_to_datapack = {
-                executor.submit(self.process_datapack, datapack): datapack 
+                executor.submit(self.process_datapack, datapack): datapack
                 for datapack in self.datapacks
             }
-            
+
             # Collect results with progress bar
             for future in tqdm(future_to_datapack, desc="Processing datapacks"):
                 try:
@@ -204,8 +258,10 @@ class Processor(DataProcessor):
                 logs = (
                     df.select(pl.col("message")).unique().collect()["message"].to_list()
                 )
-                # Use optimized batch processing
-                all_log_templates.update(self.drain.process_batch(logs))
+                all_log_templates.update(
+                    self.drain.process_batch(random.sample(logs, min(len(logs), 10000)))
+                )
+                logger.info(f"current log templates: {len(all_log_templates)}")
 
             for trace_file in self.trace_files:
                 df = pl.scan_parquet(datapack / trace_file)
@@ -322,14 +378,73 @@ class Processor(DataProcessor):
         metadata.to_json(f".cache/{self.dataset}_metadata.json")
         return metadata
 
-    def extract_labels(self, datapack: Path) -> tuple[datetime, datetime, str, str]:
+    def extract_rcabench_labels(
+        self, datapack: Path
+    ) -> tuple[datetime, datetime, datetime, datetime, str, str]:
+        label_file = self.config.label_files  # type: ignore
+
+        assert label_file is not None, (
+            f"Label file for {self.dataset} is not defined in the config."
+        )
+        assert isinstance(label_file, list)
+        assert "injection.json" in label_file and "env.json" in label_file
+
+        with open(datapack / "injection.json", "r") as f:
+            injection = json.load(f)
+
+        assert (
+            injection is not None
+            and "ground_truth" in injection
+            and "service" in injection["ground_truth"]
+        ), f"Invalid injection file format in {datapack / 'injection.json'}."
+        gt_services = injection["ground_truth"]["service"]
+
+        assert "fault_type" in injection
+        fault_type = injection.get("fault_type")
+
+        with open(datapack / "env.json", "r") as f:
+            env = json.load(f)
+
+        assert (
+            "TIMEZONE" in env
+            and "NORMAL_START" in env
+            and "NORMAL_END" in env
+            and "ABNORMAL_START" in env
+            and "ABNORMAL_END" in env
+        ), f"Invalid env file format in {datapack / 'env.json'}."
+
+        tz = pytz.timezone(env["TIMEZONE"])
+        normal_st = datetime.fromtimestamp(int(env["NORMAL_START"]), tz).astimezone(
+            pytz.UTC
+        )
+        normal_et = datetime.fromtimestamp(int(env["NORMAL_END"]), tz).astimezone(
+            pytz.UTC
+        )
+        abnormal_st = datetime.fromtimestamp(int(env["ABNORMAL_START"]), tz).astimezone(
+            pytz.UTC
+        )
+        abnormal_et = datetime.fromtimestamp(int(env["ABNORMAL_END"]), tz).astimezone(
+            pytz.UTC
+        )
+
+        return (
+            normal_st,
+            normal_et,
+            abnormal_st,
+            abnormal_et,
+            gt_services[0],
+            fault_type,
+        )
+
+    def extract_eadro_labels(
+        self, datapack: Path
+    ) -> tuple[datetime, datetime, datetime, datetime, str, str]:
         label_file = self.config.label_files  # type: ignore
 
         assert label_file is not None, (
             f"Label file for {self.dataset} is not defined in the config."
         )
         assert isinstance(label_file, list), "Label file should be a string."
-
         assert len(label_file) > 0, "No label file defined for datapack in the config."
 
         label_file_path = datapack / label_file[0]
@@ -340,22 +455,47 @@ class Processor(DataProcessor):
         assert isinstance(label, dict), "Label file should contain a dictionary."
 
         gt_service = label.get("injection_name", "")
-        fault_type = ""
-        if gt_service == "":
-            start_time = label.get("normal_start_time", "")
-            end_time = label.get("normal_end_time", "")
-        else:
-            start_time = label.get("fault_start_time", "")
-            end_time = label.get("fault_end_time", "")
-            fault_type = label.get("fault_type", "")
+        fault_type = label.get("fault_type", "")
 
-        st = datetime.fromisoformat(start_time)
-        et = datetime.fromisoformat(end_time)
-        return st, et, gt_service, fault_type
+        normal_st = (
+            datetime.fromisoformat(label["normal_start_time"])
+            if label.get("normal_start_time")
+            else datetime(1970, 1, 1, 0, 0, 0)
+        )
+        normal_et = (
+            datetime.fromisoformat(label["normal_end_time"])
+            if label.get("normal_end_time")
+            else datetime(1970, 1, 1, 0, 0, 0)
+        )
+        abnormal_st = (
+            datetime.fromisoformat(label["fault_start_time"])
+            if label.get("fault_start_time")
+            else datetime(1970, 1, 1, 0, 0, 0)
+        )
+        abnormal_et = (
+            datetime.fromisoformat(label["fault_end_time"])
+            if label.get("fault_end_time")
+            else datetime(1970, 1, 1)
+        )
+
+        return normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type
 
     def process_datapack(self, datapack: Path) -> list[DataSample]:
         samples = []
-        start_time, end_time, gt_service, fault_type = self.extract_labels(datapack)
+
+        if self.dataset == "rcabench":
+            (
+                normal_st,
+                normal_et,
+                abnormal_st,
+                abnormal_et,
+                gt_service,
+                fault_type,
+            ) = self.extract_rcabench_labels(datapack)
+        elif self.dataset == "sn" or self.dataset == "tt":
+            normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
+                self.extract_eadro_labels(datapack)
+            )
 
         interval = self.config.sample_interval  # type: ignore
         sample_step = self.config.sample_step  # type: ignore
@@ -369,77 +509,90 @@ class Processor(DataProcessor):
         metric_dfs = {}
         trace_dfs = {}
 
-        for log_file in self.log_files:
-            log_dfs[log_file] = pl.scan_parquet(datapack / log_file).filter(
-                (pl.col("time") >= start_time) & (pl.col("time") <= end_time)
-            )
+        time_range = []
+        if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
+            1970, 1, 1, 0, 0, 0
+        ):
+            time_range.append((normal_st, normal_et, "", ""))
+        if abnormal_st != datetime(1970, 1, 1, 0, 0, 0) and abnormal_et != datetime(
+            1970, 1, 1, 0, 0, 0
+        ):
+            time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
 
-        for metric_file in self.metric_files:
-            metric_dfs[metric_file] = pl.scan_parquet(datapack / metric_file).filter(
-                (pl.col("time") >= start_time) & (pl.col("time") <= end_time)
-            )
-
-        for trace_file in self.trace_files:
-            trace_dfs[trace_file] = pl.scan_parquet(datapack / trace_file).filter(
-                (pl.col("time") >= start_time) & (pl.col("time") <= end_time)
-            )
-
-        current_time = start_time
-        while current_time < end_time:
-            window_end_time = current_time + timedelta(seconds=interval)
-            if window_end_time > end_time:
-                break
-
-            sample = DataSample(
-                abnormal=fault_type != "", gt_service=gt_service, fault_type=fault_type
-            )
-
-            # Process log data
+        for start, end, fault_type, gt_service in time_range:
             for log_file in self.log_files:
-                window_df = log_dfs[log_file].filter(
-                    (pl.col("time") >= current_time)
-                    & (pl.col("time") <= window_end_time)
-                )
-                sample.log = self._process_log_from_df(
-                    window_df, current_time, window_end_time
-                )
-                assert sample.log.shape == (
-                    len(self.metadata.services),
-                    len(self.metadata.log_templates) + 1,
+                log_dfs[log_file] = pl.scan_parquet(datapack / log_file).filter(
+                    (pl.col("time") >= start) & (pl.col("time") <= end)
                 )
 
-            # Process metrics data
             for metric_file in self.metric_files:
-                window_df = metric_dfs[metric_file].filter(
-                    (pl.col("time") >= current_time)
-                    & (pl.col("time") <= window_end_time)
-                )
-                sample.metric = self._process_metrics_from_df(
-                    window_df, current_time, window_end_time
-                )
-                assert sample.metric.shape == (
-                    len(self.metadata.services),
-                    interval,
-                    len(self.metadata.metric_names),
-                )
+                metric_dfs[metric_file] = pl.scan_parquet(
+                    datapack / metric_file
+                ).filter((pl.col("time") >= start) & (pl.col("time") <= end))
 
-            # Process trace data
             for trace_file in self.trace_files:
-                window_df = trace_dfs[trace_file].filter(
-                    (pl.col("time") >= current_time)
-                    & (pl.col("time") <= window_end_time)
-                )
-                sample.trace = self._process_traces_from_df(
-                    window_df, current_time, window_end_time
-                )
-                assert sample.trace.shape == (
-                    len(self.metadata.services),
-                    interval,
-                    2,
+                trace_dfs[trace_file] = pl.scan_parquet(datapack / trace_file).filter(
+                    (pl.col("time") >= start) & (pl.col("time") <= end)
                 )
 
-            samples.append(sample)
-            current_time += timedelta(seconds=sample_step)
+            current_time = start
+            while current_time < end:
+                window_end_time = current_time + timedelta(seconds=interval)
+                if window_end_time > end:
+                    break
+
+                sample = DataSample(
+                    abnormal=gt_service != "",
+                    gt_service=gt_service,
+                    fault_type=fault_type,
+                )
+
+                # Process log data
+                for log_file in self.log_files:
+                    window_df = log_dfs[log_file].filter(
+                        (pl.col("time") >= current_time)
+                        & (pl.col("time") <= window_end_time)
+                    )
+                    sample.log = self._process_log_from_df(
+                        window_df, current_time, window_end_time
+                    )
+                    assert sample.log.shape == (
+                        len(self.metadata.services),
+                        len(self.metadata.log_templates) + 1,
+                    )
+
+                # Process metrics data
+                for metric_file in self.metric_files:
+                    window_df = metric_dfs[metric_file].filter(
+                        (pl.col("time") >= current_time)
+                        & (pl.col("time") <= window_end_time)
+                    )
+                    sample.metric = self._process_metrics_from_df(
+                        window_df, current_time, window_end_time
+                    )
+                    assert sample.metric.shape == (
+                        len(self.metadata.services),
+                        interval,
+                        len(self.metadata.metric_names),
+                    )
+
+                # Process trace data
+                for trace_file in self.trace_files:
+                    window_df = trace_dfs[trace_file].filter(
+                        (pl.col("time") >= current_time)
+                        & (pl.col("time") <= window_end_time)
+                    )
+                    sample.trace = self._process_traces_from_df(
+                        window_df, current_time, window_end_time
+                    )
+                    assert sample.trace.shape == (
+                        len(self.metadata.services),
+                        interval,
+                        2,
+                    )
+
+                samples.append(sample)
+                current_time += timedelta(seconds=sample_step)
 
         return samples
 

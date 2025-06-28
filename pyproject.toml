@@ -30,3 +30,9 @@ dependencies = [
 [tool.uv.sources]
 dgl = { url = "https://data.dgl.ai/wheels/torch-2.4/cu124/dgl-2.4.0%2Bcu124-cp312-cp312-manylinux1_x86_64.whl" }
 torch = { url = "https://download.pytorch.org/whl/cu124/torch-2.4.0%2Bcu124-cp312-cp312-linux_x86_64.whl" }
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+    "jupyter>=1.1.1",
+]

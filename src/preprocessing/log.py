@@ -75,13 +75,9 @@ class DrainProcessor:
             for line, template in new_templates.items():
                 self._cache_manager.set(line, template)
 
-        # 减少保存频率 - 只在有新模板时保存
         if new_templates:
             self.save_cache()
 
-        # logger.debug(
-        #     f"Cache hits: {cache_hits}/{len(sentences)}, New templates: {len(new_templates)}"
-        # )
         return results
 
     def _extract_template(self, line: str) -> str:
