@@ -20,7 +20,9 @@ import pickle
 from .utils import timeit
 import gc
 from functools import lru_cache
-
+from loguru import logger
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 class Processor(DataProcessor):
     def __init__(self, parsers: dict[str, BaseParser], conf: str = "config.toml"):
@@ -33,9 +35,16 @@ class Processor(DataProcessor):
         self.drain = DrainProcessor(conf="drain.ini", save_path="cache/drain/temp")
 
         self._file_cache = {}
+        self._lock = threading.Lock()  # Add thread safety for shared resources
 
         pl.Config.set_streaming_chunk_size(50000)
         pl.Config.set_tbl_rows(20)
+    
+    def _z_score_normalize(self, x: np.ndarray) -> np.ndarray:
+        """Z-score normalization matching the old preprocessing method"""
+        mean_val = np.mean(x)
+        std_val = np.std(x)
+        return (x - mean_val) / (std_val + 1e-8)
 
     @lru_cache(maxsize=128)
     def _get_file_schema(self, file_path: str) -> dict:
@@ -70,7 +79,7 @@ class Processor(DataProcessor):
     def process_dataset(self):
         """
         1. create metadata: create_metadata
-        2. process each datapack: process_datapack
+        2. process each datapack: process_datapack (with parallel processing)
            2.1 process log
            2.2 process metrics
            2.3 process traces
@@ -82,10 +91,25 @@ class Processor(DataProcessor):
         self.metadata = self.create_metadata()
 
         samples: list[DataSample] = []
-        for datapack in tqdm(self.datapacks, desc="Processing datapacks"):
-            samples.extend(self.process_datapack(datapack))
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            # Submit all datapack processing tasks
+            future_to_datapack = {
+                executor.submit(self.process_datapack, datapack): datapack 
+                for datapack in self.datapacks
+            }
+            
+            # Collect results with progress bar
+            for future in tqdm(future_to_datapack, desc="Processing datapacks"):
+                try:
+                    datapack_samples = future.result()
+                    samples.extend(datapack_samples)
+                except Exception as e:
+                    datapack = future_to_datapack[future]
+                    logger.error(f"Error processing datapack {datapack}: {e}")
+                    raise
 
-        # dict_samples = {np.int64(i): sample for i, sample in enumerate(samples)}
         with open(f".cache/{self.dataset}_samples.pkl", "wb") as f:
             pickle.dump(samples, f)
         return samples
@@ -606,7 +630,7 @@ class Processor(DataProcessor):
         self._smooth_sparse_data(result, num_services, interval, num_metrics)
 
         assert result.shape == (num_services, interval, num_metrics), (
-            f"Expected metrics result shape ({num_services}, {interval}, num_metrics), "
+            f"Expected metrics result shape ({num_services}, {interval}, {num_metrics}), "
             f"got {result.shape}"
         )
         return result
