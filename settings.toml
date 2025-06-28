@@ -1,4 +1,4 @@
-dataset = "tt"
+dataset = "sn"
 
 [datasets.sn]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
@@ -24,18 +24,27 @@ sample_step = 1
 [datasets.rcabench]
 root_path = "/mnt/jfs/rcabench_dataset"
 load_method = "database"
-sample_interval = 10                    # seconds. Means every sample is 10 seconds apart
-
+log_files = ["abnormal_logs.parquet", "normal_logs.parquet"]
+metric_files = [
+    "abnormal_metrics.parquet",
+    "normal_metrics.parquet",
+    "normal_metrics_sum.parquet",
+    "abnormal_metrics_sum.parquet",
+]
+trace_files = ["abnormal_traces.parquet", "normal_traces.parquet"]
+label_files = ["injection.json", "env.json"]
 
 # Training configuration
 [training]
 random_seed = 114514
+balance_train_set = false
 gpu = true
+device = "cuda"           # cuda, cpu, or auto
 epochs = 200
 batch_size = 256
 lr = 0.001
-patience = 10
-train_ratio = 0.7
+patience = 20
+train_ratio = 0.9
 evaluation_epoch = 10
 
 # Learning rate scheduler configuration
@@ -50,11 +59,12 @@ min_lr = 1e-6
 [model]
 self_attn = true
 fuse_dim = 128
-alpha = 0.01     # Loss combination weight  
-log_dim = 16     # Log embedding dimension
-attn_head = 4    # Number of attention heads
-activation = 0.2 # LeakyReLU negative slope
-debug = false    # Debug mode
+alpha = 0.01      # Loss combination weight  
+log_dim = 16      # Log embedding dimension
+attn_head = 4     # Number of attention heads
+activation = 0.2  # LeakyReLU negative slope
+debug = false     # Debug mode
+chunk_length = 10
 
 # BaseModel specific parameters
 [model.base]
@@ -76,14 +86,12 @@ hiddens = [64]
 kernel_sizes = [2]
 hiddens = [64]
 self_attn = true
-chunk_length = 10
 
 # Model architecture - metric processing
 [model.metric]
 kernel_sizes = [2]
 hiddens = [64]
 self_attn = true
-chunk_length = 10
 dropout = 0.0
 
 # Model architecture - graph processing
@@ -91,23 +99,25 @@ dropout = 0.0
 hiddens = [64]
 attn_drop = 0.0
 
-# Data processing configuration  
-[data]
-chunk_length = 10
-test_ratio = 0.3
-threshold = 1
+# Experiment management configuration
+[experiment]
+name_prefix = "exp"
+description = "EADRO anomaly detection and fault localization experiment"
+tags = ["eadro", "anomaly-detection", "fault-localization"]
+log_level = "INFO"
+log_rotation = "1 day"
+metadata_save_frequency = 10
+checkpoint_frequency = 10
+auto_cleanup = true
+max_checkpoints = 5
+primary_metric = "HR@1"
 
-# Paths configuration
+# Paths configuration - updated with experiment-specific paths
 [paths]
 data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
 result_dir = "result/"
+checkpoint_dir = "checkpoints"
+logs_dir = "logs"
+inference_dir = "inference"
 chunks_dir = "chunks/"
 cache_dir = ".cache/"
-
-# Weights & Biases configuration
-[wandb]
-enabled = true
-project = "eadro-training"
-entity = ""                # Set your W&B entity here
-tags = []
-notes = ""

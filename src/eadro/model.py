@@ -197,7 +197,7 @@ class TraceModel(nn.Module):
         trace_self_attn = config.get("model.trace.self_attn")
         self.self_attn = trace_self_attn
         if trace_self_attn:
-            chunk_length = config.get("model.trace.chunk_length")
+            chunk_length = config.get("model.chunk_length")
             self.attn_layer = SelfAttention(self.out_dim, chunk_length)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -242,7 +242,7 @@ class MetricModel(nn.Module):
         metric_self_attn = config.get("model.metric.self_attn")
         self.self_attn = metric_self_attn
         if metric_self_attn:
-            chunk_length = config.get("model.metric.chunk_length")
+            chunk_length = config.get("model.chunk_length")
             self.attn_layer = SelfAttention(self.out_dim, chunk_length)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -299,7 +299,7 @@ class MultiSourceEncoder(nn.Module):
         )
         trace_dim = self.trace_model.out_dim
         log_dim = config.get("model.log_dim")
-        self.log_model = LogModel(event_num, log_dim)
+        self.log_model = LogModel(event_num, log_dim).to(device)
         self.metric_model = MetricModel(
             metric_num=metric_num,
             device=device,
@@ -311,7 +311,7 @@ class MultiSourceEncoder(nn.Module):
         fuse_dim = config.get("model.fuse_dim")
         if not fuse_dim % 2 == 0:
             fuse_dim += 1
-        self.fuse = nn.Linear(fuse_in, fuse_dim)
+        self.fuse = nn.Linear(fuse_in, fuse_dim).to(device)
 
         self.activate = nn.GLU()
         self.feat_in_dim = int(fuse_dim // 2)

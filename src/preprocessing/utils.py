@@ -16,6 +16,7 @@ import inspect
 import sys
 from enum import Enum, auto
 from loguru import logger
+from collections import OrderedDict
 
 
 class Dataset(Enum):
@@ -111,51 +112,81 @@ def seed_everything(seed=42):
 
 class CacheManager(Generic[T]):
     """
-    A generic, thread-safe manager for file-based object caching using pickle.
+    A generic, thread-safe manager for file-based object caching using pickle with LRU eviction.
     """
 
-    def __init__(self, cache_path: Path):
+    def __init__(self, cache_path: Path, max_size: int = 10000):
         self.cache_file = cache_path
         self.cache_dir = self.cache_file.parent
+        self.max_size = max_size
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache: dict[str, T] = self._load_cache()
+        self._cache: OrderedDict[str, T] = self._load_cache()
         self._lock = threading.Lock()
 
-    def _load_cache(self) -> dict[str, T]:
+    def _load_cache(self) -> OrderedDict[str, T]:
         """Loads the cache from a pickle file if it exists."""
         if not self.cache_file.exists():
-            return {}
+            return OrderedDict()
         try:
             with open(self.cache_file, "rb") as f:
-                cache = pickle.load(f)
+                cache_dict = pickle.load(f)
+
+            # Convert to OrderedDict and apply size limit
+            cache = (
+                OrderedDict(cache_dict) if isinstance(cache_dict, dict) else cache_dict
+            )
+
+            # If cache exceeds max_size, keep only the last max_size items
+            if len(cache) > self.max_size:
+                items_to_keep = list(cache.items())[-self.max_size :]
+                cache = OrderedDict(items_to_keep)
+                logger.warning(
+                    f"Cache size {len(cache_dict)} exceeded limit {self.max_size}, truncated to {len(cache)} items"
+                )
+
             logger.info(f"Loaded {len(cache)} items from cache: {self.cache_file}")
             return cache
         except (pickle.UnpicklingError, EOFError, Exception) as e:
             logger.warning(
                 f"Failed to load cache {self.cache_file}: {e}. Starting fresh."
             )
-            return {}
+            return OrderedDict()
+
+    def _evict_if_needed(self):
+        """Evicts the least recently used item if cache exceeds max_size."""
+        while len(self._cache) >= self.max_size:
+            oldest_key = next(iter(self._cache))
+            self._cache.pop(oldest_key)
 
     def save(self):
         """Saves the current cache to a pickle file."""
         with self._lock:
             try:
                 with open(self.cache_file, "wb") as f:
-                    pickle.dump(self._cache, f)
-                logger.info(
-                    f"Saved {len(self._cache)} items to cache: {self.cache_file}"
-                )
+                    pickle.dump(dict(self._cache), f)
             except Exception as e:
                 logger.error(f"Failed to save cache {self.cache_file}: {e}")
 
     def get(self, key: str) -> Optional[T]:
-        """Gets an item from the cache by key."""
+        """Gets an item from the cache by key and updates its position (LRU)."""
         with self._lock:
-            return self._cache.get(key)
+            if key in self._cache:
+                # Move to end (most recently used)
+                value = self._cache.pop(key)
+                self._cache[key] = value
+                return value
+            return None
 
     def set(self, key: str, value: T):
         """Sets an item in the cache."""
         with self._lock:
+            if key in self._cache:
+                # Update existing key and move to end
+                self._cache.pop(key)
+            else:
+                # Check if we need to evict before adding new item
+                self._evict_if_needed()
+
             self._cache[key] = value
 
     def __contains__(self, key: str) -> bool:
@@ -186,14 +217,10 @@ def timeit(*, log_level: str = "DEBUG", log_args: bool | set[str] = True):
 
             sys.stdout.flush()
 
-            # Get initial memory usage
-            initial_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-
             start = datetime.now()
             result = func(*args, **kwargs)
             end = datetime.now()
 
-            # Get peak memory usage
             maxrss_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
             maxrss_mib = maxrss_kib / 1024
 

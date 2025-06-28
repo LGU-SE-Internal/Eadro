@@ -10,3 +10,4 @@ dataset_output_debug
 data
 .cache
 cache
+*.log

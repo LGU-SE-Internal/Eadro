@@ -8,16 +8,17 @@
             "name": "dataset",
             "type": "debugpy",
             "request": "launch",
-            "program": "create_dataset.py",
+            "program": "client.py",
             "console": "integratedTerminal",
-            "args": "--max-cases 5 --dataset rcabench"
+            "args": "create-dataset"
         },
         {
             "name": "train",
             "type": "debugpy",
             "request": "launch",
-            "program": "train.py",
+            "program": "client.py",
             "console": "integratedTerminal",
-        }
+            "args": "train",
+        },
     ]
 }
