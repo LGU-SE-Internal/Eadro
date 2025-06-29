@@ -299,7 +299,7 @@ class MultiSourceEncoder(nn.Module):
         )
         trace_dim = self.trace_model.out_dim
         log_dim = config.get("model.log_dim")
-        self.log_model = LogModel(event_num, log_dim)
+        self.log_model = LogModel(event_num, log_dim).to(device)
         self.metric_model = MetricModel(
             metric_num=metric_num,
             device=device,
@@ -311,7 +311,7 @@ class MultiSourceEncoder(nn.Module):
         fuse_dim = config.get("model.fuse_dim")
         if not fuse_dim % 2 == 0:
             fuse_dim += 1
-        self.fuse = nn.Linear(fuse_in, fuse_dim)
+        self.fuse = nn.Linear(fuse_in, fuse_dim).to(device)
 
         self.activate = nn.GLU()
         self.feat_in_dim = int(fuse_dim // 2)

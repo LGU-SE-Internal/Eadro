@@ -351,7 +351,7 @@ class EadroTrainingHandler(
             optimizer.zero_grad()
 
             # Forward pass
-            result = model.forward(graph.to(self.device), ground_truth)
+            result = model.forward(graph.to(self.device), ground_truth.to(self.device))
             loss = result["loss"]
 
             # Backward pass
@@ -379,7 +379,9 @@ class EadroTrainingHandler(
 
         with torch.no_grad():
             for graph, ground_truths in test_loader:
-                res = model.forward(graph.to(self.device), ground_truths)
+                res = model.forward(
+                    graph.to(self.device), ground_truths.to(self.device)
+                )
                 for idx, faulty_nodes in enumerate(res["y_pred"]):
                     culprit = ground_truths[idx].item()
                     if culprit == -1:
@@ -443,7 +445,9 @@ class EadroInferenceHandler(
 
         with torch.no_grad():
             for graph, ground_truths in test_loader:
-                result = model.forward(graph.to(self.device), ground_truths)
+                result = model.forward(
+                    graph.to(self.device), ground_truths.to(self.device)
+                )
                 predictions = result["y_pred"]
                 probabilities = result["pred_prob"]
 
@@ -474,10 +478,12 @@ class EadroInferenceHandler(
 def create_eadro_model(
     event_num: int, metric_num: int, node_num: int, device: str, config: Config
 ) -> MainModel:
-    return MainModel(
+    model = MainModel(
         event_num=event_num,
         metric_num=metric_num,
         node_num=node_num,
         device=device,
         config=config,
     )
+    # Ensure the entire model is on the correct device
+    return model.to(device)

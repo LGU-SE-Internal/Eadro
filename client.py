@@ -97,6 +97,9 @@ def train(
             config=config,
         )
 
+        # Ensure the entire model is on the correct device
+        model = model.to(device)
+
         # Create experiment manager
         experiment_manager = UniversalExperimentManager[
             MainModel, tuple, OptimizerAdapter
