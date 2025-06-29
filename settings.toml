@@ -40,6 +40,7 @@ sample_step = 1
 [training]
 random_seed = 114514
 gpu = true
+device = "cuda"       # cuda, cpu, or auto
 epochs = 200
 batch_size = 256
 lr = 0.001
@@ -99,10 +100,26 @@ dropout = 0.0
 hiddens = [64]
 attn_drop = 0.0
 
-# Paths configuration
+# Experiment management configuration
+[experiment]
+name_prefix = "exp"
+description = "Default experiment description"
+tags = []
+log_level = "INFO"
+log_rotation = "1 day"
+metadata_save_frequency = 10
+checkpoint_frequency = 10
+auto_cleanup = true
+max_checkpoints = 5
+primary_metric = "val_accuracy"
+
+# Paths configuration - updated with experiment-specific paths
 [paths]
 data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
 result_dir = "result/"
+checkpoint_dir = "checkpoints"
+logs_dir = "logs"
+inference_dir = "inference"
 chunks_dir = "chunks/"
 cache_dir = ".cache/"
 
