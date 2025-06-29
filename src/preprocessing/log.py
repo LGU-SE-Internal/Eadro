@@ -6,13 +6,16 @@ from drain3 import TemplateMiner
 from drain3.file_persistence import FilePersistence
 from drain3.template_miner_config import TemplateMinerConfig
 from .utils import CacheManager
+import os
 
 
 class DrainProcessor:
     def __init__(self, conf: str, save_path: str, cache_dir: str = "./cache/drain"):
+        os.makedirs(cache_dir, exist_ok=True)
         persistence = FilePersistence(save_path)
         miner_config = TemplateMinerConfig()
         miner_config.load(conf)
+
         self._template_miner = TemplateMiner(persistence, config=miner_config)
         self._cache_manager = CacheManager[str](
             Path(cache_dir) / "sentence_templates.pkl"

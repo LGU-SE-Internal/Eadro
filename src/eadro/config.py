@@ -1,39 +1,20 @@
-import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from dynaconf import Dynaconf  # type: ignore
 
 
-def _get_settings() -> Dynaconf:
-    config_dir = Path(__file__).parent.parent.parent
-
-    return Dynaconf(
-        settings_files=[
-            str(config_dir / "settings.toml"),
-        ],
-        environments=True,
-        env_switcher="ENV_FOR_DYNACONF",
-        envvar_prefix="EADRO",
-        load_dotenv=True,
-        merge_enabled=True,
-    )
-
-
-# Global settings instance
-settings = _get_settings()
-
-
 class Config:
-    def __init__(self, config_file: Optional[str] = None):
-        self._settings = settings
+    """简单的配置管理类，基于 dynaconf"""
 
-        if config_file and Path(config_file).exists():
-            additional_settings = Dynaconf(
-                settings_files=[config_file],
-                merge_enabled=True,
-            )
-            for key in additional_settings.keys():  # type: ignore
-                self._settings.set(key, additional_settings.get(key))  # type: ignore
+    def __init__(self, config_file: Optional[str] = None):
+        # 默认配置文件路径
+        if config_file is None:
+            config_file = "settings.toml"
+
+        # 创建 dynaconf 实例
+        self._settings = Dynaconf(
+            settings_files=[config_file] if Path(config_file).exists() else [],
+        )
 
     def get(self, key: str):
         res = self._settings.get(key, None)  # type: ignore
@@ -44,5 +25,12 @@ class Config:
         self._settings.set(key, value)  # type: ignore
 
     def update(self, updates: Dict[str, Any]):
+        """批量更新配置"""
         for key, value in updates.items():
             self.set(key, value)
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {}
+        for key in self._settings.keys():  # type: ignore
+            result[key] = self._settings.get(key)  # type: ignore
+        return result

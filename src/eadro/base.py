@@ -10,8 +10,9 @@ from sklearn.metrics import ndcg_score
 from loguru import logger
 
 from .model import MainModel
-from .experiment_manager import ExperimentManager
 from .config import Config
+from torch.optim.adam import Adam
+from .experiment_sdk import UniversalExperimentManager
 
 
 class BaseModel(nn.Module):
@@ -62,7 +63,7 @@ class BaseModel(nn.Module):
         )
 
         # Initialize experiment manager
-        self.exp_manager = ExperimentManager(config, experiment_name)
+        self.exp_manager = UniversalExperimentManager(config, experiment_name)
 
         # Create main model with config
         self.model = MainModel(event_num, metric_num, node_num, device, config)
@@ -195,8 +196,6 @@ class BaseModel(nn.Module):
         pre_loss, worse_count = float("inf"), 0
         start_epoch = 1
 
-        from torch.optim.adam import Adam
-
         optimizer = Adam(self.model.parameters(), lr=self.lr)
         lr_scheduler = self._create_lr_scheduler(optimizer)
 
@@ -260,7 +259,7 @@ class BaseModel(nn.Module):
                 "lr": current_lr,
                 "time": epoch_time_elapsed,
             }
-            self.exp_manager.log_training_step(epoch, training_metrics)
+            self.exp_manager.log_training_sxtep(epoch, training_metrics)
 
             logger.info(
                 "Epoch {}/{}, training loss: {:.5f}, lr: {:.6f} [{:.2f}s]".format(
@@ -486,12 +485,12 @@ class BaseModel(nn.Module):
         metric_num: int,
         node_num: int,
         device: str,
-        config: Any,
+        config: Config,
         checkpoint_path: Optional[str] = None,
         load_best: bool = True,
     ) -> "BaseModel":
         exp_manager = ExperimentManager.load_experiment(
-            experiment_name, config.get("paths.result_dir", "result")
+            experiment_name, config.get("paths.result_dir")
         )
 
         # Create model instance

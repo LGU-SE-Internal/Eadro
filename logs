@@ -1,0 +1,200 @@
+2025-06-29 09:03:11.446 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:146 - === 初始 Label 分布 ===
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 4 (mysql): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 6 (ts-admin-basic-info-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 7 (ts-admin-order-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 8 (ts-admin-route-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 12 (ts-auth-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 14 (ts-basic-service): 11 个样本 (7.1%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 16 (ts-config-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 17 (ts-consign-price-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 18 (ts-consign-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 19 (ts-contacts-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 22 (ts-food-delivery-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 23 (ts-food-service): 4 个样本 (2.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 25 (ts-inside-payment-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 28 (ts-order-other-service): 7 个样本 (4.5%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 29 (ts-order-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 30 (ts-payment-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 31 (ts-preserve-other-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 32 (ts-preserve-service): 4 个样本 (2.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 33 (ts-price-service): 3 个样本 (1.9%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 34 (ts-rebook-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 35 (ts-route-plan-service): 23 个样本 (14.7%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 36 (ts-route-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 37 (ts-seat-service): 8 个样本 (5.1%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 38 (ts-security-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 39 (ts-station-food-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 40 (ts-station-service): 7 个样本 (4.5%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 42 (ts-train-food-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 43 (ts-train-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 44 (ts-travel-plan-service): 9 个样本 (5.8%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 45 (ts-travel-service): 14 个样本 (9.0%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 46 (ts-travel2-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 47 (ts-ui-dashboard): 18 个样本 (11.5%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 48 (ts-user-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:164 - Label 50 (ts-voucher-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:184 - === 平衡后 Label 分布 ===
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 4 (mysql): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 6 (ts-admin-basic-info-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 7 (ts-admin-order-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 8 (ts-admin-route-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 12 (ts-auth-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 14 (ts-basic-service): 11 个样本 (7.1%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 16 (ts-config-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 17 (ts-consign-price-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 18 (ts-consign-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 19 (ts-contacts-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 22 (ts-food-delivery-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 23 (ts-food-service): 4 个样本 (2.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 25 (ts-inside-payment-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 28 (ts-order-other-service): 7 个样本 (4.5%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 29 (ts-order-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 30 (ts-payment-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 31 (ts-preserve-other-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 32 (ts-preserve-service): 4 个样本 (2.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 33 (ts-price-service): 3 个样本 (1.9%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 34 (ts-rebook-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 35 (ts-route-plan-service): 23 个样本 (14.7%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 36 (ts-route-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 37 (ts-seat-service): 8 个样本 (5.1%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 38 (ts-security-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 39 (ts-station-food-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 40 (ts-station-service): 7 个样本 (4.5%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 42 (ts-train-food-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 43 (ts-train-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 44 (ts-travel-plan-service): 9 个样本 (5.8%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 45 (ts-travel-service): 14 个样本 (9.0%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 46 (ts-travel2-service): 5 个样本 (3.2%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 47 (ts-ui-dashboard): 18 个样本 (11.5%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 48 (ts-user-service): 2 个样本 (1.3%)
+2025-06-29 09:03:11.447 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:202 - Label 50 (ts-voucher-service): 1 个样本 (0.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:230 - === 训练集 Label 分布 ===
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 4 (mysql): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 6 (ts-admin-basic-info-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 7 (ts-admin-order-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 8 (ts-admin-route-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 12 (ts-auth-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 14 (ts-basic-service): 9 个样本 (7.7%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 16 (ts-config-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 17 (ts-consign-price-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 18 (ts-consign-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 19 (ts-contacts-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 22 (ts-food-delivery-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 23 (ts-food-service): 3 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 25 (ts-inside-payment-service): 4 个样本 (3.4%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 28 (ts-order-other-service): 6 个样本 (5.1%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 29 (ts-order-service): 4 个样本 (3.4%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 30 (ts-payment-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 31 (ts-preserve-other-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 32 (ts-preserve-service): 3 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 33 (ts-price-service): 2 个样本 (1.7%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 34 (ts-rebook-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 35 (ts-route-plan-service): 20 个样本 (17.1%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 36 (ts-route-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 37 (ts-seat-service): 7 个样本 (6.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 38 (ts-security-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 39 (ts-station-food-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 40 (ts-station-service): 6 个样本 (5.1%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 42 (ts-train-food-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 43 (ts-train-service): 4 个样本 (3.4%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 44 (ts-travel-plan-service): 8 个样本 (6.8%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 45 (ts-travel-service): 12 个样本 (10.3%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 46 (ts-travel2-service): 4 个样本 (3.4%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 47 (ts-ui-dashboard): 16 个样本 (13.7%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 48 (ts-user-service): 1 个样本 (0.9%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:247 - Label 50 (ts-voucher-service): 0 个样本 (0.0%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:251 - === 测试集 Label 分布 ===
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 4 (mysql): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 6 (ts-admin-basic-info-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 7 (ts-admin-order-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 8 (ts-admin-route-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 12 (ts-auth-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 14 (ts-basic-service): 2 个样本 (5.1%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 16 (ts-config-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 17 (ts-consign-price-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 18 (ts-consign-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 19 (ts-contacts-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 22 (ts-food-delivery-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 23 (ts-food-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 25 (ts-inside-payment-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 28 (ts-order-other-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 29 (ts-order-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 30 (ts-payment-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 31 (ts-preserve-other-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 32 (ts-preserve-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 33 (ts-price-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 34 (ts-rebook-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 35 (ts-route-plan-service): 3 个样本 (7.7%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 36 (ts-route-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 37 (ts-seat-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 38 (ts-security-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 39 (ts-station-food-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 40 (ts-station-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 42 (ts-train-food-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 43 (ts-train-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 44 (ts-travel-plan-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 45 (ts-travel-service): 2 个样本 (5.1%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 46 (ts-travel2-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 47 (ts-ui-dashboard): 2 个样本 (5.1%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 48 (ts-user-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:268 - Label 50 (ts-voucher-service): 1 个样本 (2.6%)
+2025-06-29 09:03:11.448 | INFO     | src.eadro.eadro_handlers:load_timeseries_data:272 - Loaded 117 training and 39 test time series
+2025-06-29 09:03:11.455 | INFO     | src.eadro.experiment_sdk:__init__:246 - Initialized experiment: exp_rcabench_20250629_090311
+2025-06-29 09:03:11.455 | INFO     | src.eadro.experiment_sdk:__init__:247 - Experiment directory: result/exp_rcabench_20250629_090311
+2025-06-29 09:03:11.455 | INFO     | __main__:train_sdk:52 - Created experiment: exp_rcabench_20250629_090311
+2025-06-29 09:03:11.514 | INFO     | src.eadro.eadro_handlers:__init__:68 - Created TimeWindowDataset with 11602 windows from 117 time series samples
+2025-06-29 09:03:11.514 | INFO     | src.eadro.eadro_handlers:__init__:68 - Created TimeWindowDataset with 3645 windows from 39 time series samples
+2025-06-29 09:03:11.616 | INFO     | __main__:train_sdk:66 - Starting training with SDK...
+2025-06-29 09:03:27.391 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 0 [train] - loss: 2.7720, lr: 0.0100, time: 15.4172, worse_count: 0
+2025-06-29 09:03:32.270 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 0 [validation] - HR@1: 0.0261, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0261, NDCG@3: 0.0659, NDCG@5: 0.0823
+2025-06-29 09:03:32.276 | INFO     | src.eadro.experiment_sdk:save_checkpoint:387 - Saved checkpoint at epoch 0: result/exp_rcabench_20250629_090311/checkpoints/checkpoint_epoch_0000.ckpt
+2025-06-29 09:03:32.282 | INFO     | src.eadro.experiment_sdk:save_checkpoint:408 - Saved best checkpoint at epoch 0: result/exp_rcabench_20250629_090311/checkpoints/best_model.ckpt
+2025-06-29 09:03:32.286 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 0 completed in 20.31s
+2025-06-29 09:03:48.948 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 1 [train] - loss: 2.7039, lr: 0.0100, time: 16.6615, worse_count: 0
+2025-06-29 09:03:53.913 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 1 [validation] - HR@1: 0.0395, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0395, NDCG@3: 0.0714, NDCG@5: 0.0872
+2025-06-29 09:03:53.921 | INFO     | src.eadro.experiment_sdk:save_checkpoint:408 - Saved best checkpoint at epoch 1: result/exp_rcabench_20250629_090311/checkpoints/best_model.ckpt
+2025-06-29 09:03:53.925 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 1 completed in 21.64s
+2025-06-29 09:04:09.468 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 2 [train] - loss: 2.7005, lr: 0.0100, time: 15.5425, worse_count: 0
+2025-06-29 09:04:14.256 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 2 [validation] - HR@1: 0.0299, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0299, NDCG@3: 0.0679, NDCG@5: 0.0842
+2025-06-29 09:04:14.262 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 2 completed in 20.34s
+2025-06-29 09:04:29.899 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 3 [train] - loss: 2.7020, lr: 0.0100, time: 15.6368, worse_count: 1
+2025-06-29 09:04:34.929 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 3 [validation] - HR@1: 0.0299, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0299, NDCG@3: 0.0679, NDCG@5: 0.0842
+2025-06-29 09:04:34.936 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 3 completed in 20.67s
+2025-06-29 09:04:50.773 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 4 [train] - loss: 2.6996, lr: 0.0100, time: 15.8372, worse_count: 0
+2025-06-29 09:04:55.750 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 4 [validation] - HR@1: 0.0395, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0395, NDCG@3: 0.0714, NDCG@5: 0.0872
+2025-06-29 09:04:55.757 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 4 completed in 20.82s
+2025-06-29 09:05:11.984 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 5 [train] - loss: 2.6996, lr: 0.0100, time: 16.2267, worse_count: 0
+2025-06-29 09:05:16.749 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 5 [validation] - HR@1: 0.0395, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0395, NDCG@3: 0.0709, NDCG@5: 0.0867
+2025-06-29 09:05:16.755 | INFO     | src.eadro.experiment_sdk:save_checkpoint:387 - Saved checkpoint at epoch 5: result/exp_rcabench_20250629_090311/checkpoints/checkpoint_epoch_0005.ckpt
+2025-06-29 09:05:16.759 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 5 completed in 21.00s
+2025-06-29 09:05:32.468 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 6 [train] - loss: 2.6943, lr: 0.0100, time: 15.7088, worse_count: 0
+2025-06-29 09:05:37.469 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 6 [validation] - HR@1: 0.0261, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0261, NDCG@3: 0.0659, NDCG@5: 0.0817
+2025-06-29 09:05:37.475 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 6 completed in 20.72s
+2025-06-29 09:05:53.338 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 7 [train] - loss: 2.6964, lr: 0.0100, time: 15.8627, worse_count: 1
+2025-06-29 09:05:58.207 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 7 [validation] - HR@1: 0.0261, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0261, NDCG@3: 0.0659, NDCG@5: 0.0817
+2025-06-29 09:05:58.214 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 7 completed in 20.74s
+2025-06-29 09:06:13.700 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 8 [train] - loss: 2.6973, lr: 0.0100, time: 15.4863, worse_count: 2
+2025-06-29 09:06:18.589 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 8 [validation] - HR@1: 0.0395, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0395, NDCG@3: 0.0709, NDCG@5: 0.0872
+2025-06-29 09:06:18.595 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 8 completed in 20.38s
+2025-06-29 09:06:35.016 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 9 [train] - loss: 2.6956, lr: 0.0100, time: 16.4209, worse_count: 0
+2025-06-29 09:06:39.799 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 9 [validation] - HR@1: 0.0395, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0395, NDCG@3: 0.0709, NDCG@5: 0.0867
+2025-06-29 09:06:39.806 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 9 completed in 21.21s
+2025-06-29 09:06:55.655 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 10 [train] - loss: 2.6953, lr: 0.0100, time: 15.8490, worse_count: 0
+2025-06-29 09:07:00.565 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 10 [validation] - HR@1: 0.0261, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0261, NDCG@3: 0.0659, NDCG@5: 0.0817
+2025-06-29 09:07:00.571 | INFO     | src.eadro.experiment_sdk:save_checkpoint:387 - Saved checkpoint at epoch 10: result/exp_rcabench_20250629_090311/checkpoints/checkpoint_epoch_0010.ckpt
+2025-06-29 09:07:00.576 | INFO     | src.eadro.experiment_sdk:run_training:607 - Epoch 10 completed in 20.77s
+2025-06-29 09:07:16.348 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 11 [train] - loss: 2.6937, lr: 0.0100, time: 15.7717, worse_count: 0
+2025-06-29 09:07:21.235 | INFO     | src.eadro.experiment_sdk:log_metrics:511 - Epoch 11 [validation] - HR@1: 0.0395, HR@3: 0.0955, HR@5: 0.1347, NDCG@1: 0.0395, NDCG@3: 0.0709, NDCG@5: 0.0867
+2025-06-29 09:07:21.241 | INFO     | src.eadro.experiment_sdk:run_training:601 - Early stopping at epoch 11 (patience: 10)
+2025-06-29 09:07:21.242 | INFO     | src.eadro.experiment_sdk:run_training:622 - Training completed in 249.27s
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:76 - Training completed successfully!
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:77 - Final summary:
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   experiment_name: exp_rcabench_20250629_090311
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   status: completed
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   created_at: 2025-06-29T09:03:11.450020
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   total_epochs: 11
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   best_epoch: 1
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   best_metrics: {'loss': 2.7039061273847307, 'lr': 0.01, 'time': 16.661463022232056, 'worse_count': 0, 'HR@1': 0.03950617283950617, 'HR@3': 0.09547325102880659, 'HR@5': 0.1347050754458162, 'NDCG@1': 0.03950617283950617, 'NDCG@3': 0.07140503241132752, 'NDCG@5': 0.08715907671168537}
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   total_checkpoints: 12
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   training_time: 249.267718
+2025-06-29 09:07:21.242 | INFO     | __main__:train_sdk:79 -   experiment_dir: result/exp_rcabench_20250629_090311

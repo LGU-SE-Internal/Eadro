@@ -16,8 +16,9 @@
             "name": "train",
             "type": "debugpy",
             "request": "launch",
-            "program": "train.py",
+            "program": "cli.py",
             "console": "integratedTerminal",
+            "args": "train-sdk"
         }
     ]
 }

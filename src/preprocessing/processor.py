@@ -33,7 +33,7 @@ class Processor(DataProcessor):
         self.config = config.datasets[config.dataset]  # type: ignore
 
         self.parsers: dict[str, BaseParser] = parsers
-        self.drain = DrainProcessor(conf="drain.ini", save_path=".cache/drain/temp")
+        self.drain = DrainProcessor(conf="drain.ini", save_path=".cache/drain_temp")
 
         self._file_cache = {}
 

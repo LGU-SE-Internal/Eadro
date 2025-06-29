@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 import torch
 from torch import nn
-
+from .config import Config
 from dgl.nn.pytorch.conv import GATv2Conv
 from dgl.nn.pytorch.glob import GlobalAttentionPooling
 
@@ -13,7 +13,7 @@ class GraphModel(nn.Module):
         self,
         in_dim: int,
         device: str,
-        config: Any,
+        config: Config,
     ) -> None:
         super(GraphModel, self).__init__()
         """
@@ -182,7 +182,7 @@ class TraceModel(nn.Module):
     def __init__(
         self,
         device: str,
-        config: Any,
+        config: Config,
     ) -> None:
         super(TraceModel, self).__init__()
 
@@ -219,7 +219,7 @@ class MetricModel(nn.Module):
         self,
         metric_num: int,
         device: str,
-        config: Any,
+        config: Config,
     ) -> None:
         super(MetricModel, self).__init__()
         self.metric_num = metric_num
@@ -287,7 +287,7 @@ class MultiSourceEncoder(nn.Module):
         metric_num: int,
         node_num: int,
         device: str,
-        config: Any,
+        config: Config,
     ) -> None:
         super(MultiSourceEncoder, self).__init__()
         self.node_num = node_num
@@ -381,7 +381,7 @@ class MainModel(nn.Module):
         metric_num: int,
         node_num: int,
         device: str,
-        config: Any,
+        config: Config,
     ) -> None:
         super(MainModel, self).__init__()
 

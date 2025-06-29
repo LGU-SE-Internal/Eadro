@@ -1,4 +1,4 @@
-dataset = "rcabench"
+dataset = "tt"
 
 [datasets.sn]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
@@ -47,14 +47,6 @@ patience = 10
 train_ratio = 0.9
 evaluation_epoch = 5
 
-# Experiment management
-[experiment]
-checkpoint_frequency = 5      # Save checkpoint every N epochs
-auto_cleanup = true           # Automatically cleanup old checkpoints
-keep_best_checkpoints = 3     # Number of best checkpoints to keep
-keep_recent_checkpoints = 5   # Number of recent checkpoints to keep
-save_inference_results = true # Save inference results automatically
-
 # Learning rate scheduler configuration
 [training.lr_scheduler]
 type = "step"     # none, step, exponential, cosine, plateau
@@ -62,6 +54,34 @@ step_size = 10
 gamma = 0.9
 warmup_epochs = 0
 min_lr = 1e-6
+
+# Experiment management
+[experiment]
+checkpoint_frequency = 5                       # Save checkpoint every N epochs
+auto_cleanup = true                            # Automatically cleanup old checkpoints
+max_checkpoints = 10                           # Maximum number of checkpoints to keep
+keep_best_checkpoints = 3                      # Number of best checkpoints to keep
+keep_recent_checkpoints = 5                    # Number of recent checkpoints to keep
+save_inference_results = true                  # Save inference results automatically
+primary_metric = "HR@1"                        # Primary metric for model evaluation
+description = "Eadro Experiment Configuration"
+tags = "eadro, experiment, configuration"
+log_level = "INFO"
+
+# Paths configuration for experiment
+[paths]
+data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
+result_dir = "result/"
+chunks_dir = "chunks/"
+cache_dir = ".cache/"
+checkpoint_dir = "checkpoints"
+logs_dir = "logs"
+inference_dir = "inference"
+
+# Model dimensions
+event_num = 100
+metric_num = 50
+node_num = 10
 
 # Model configuration
 [model]
@@ -72,7 +92,7 @@ log_dim = 16      # Log embedding dimension
 attn_head = 4     # Number of attention heads
 activation = 0.2  # LeakyReLU negative slope
 debug = false     # Debug mode
-chunk_length = 30
+chunk_length = 10
 
 # BaseModel specific parameters
 [model.base]
@@ -106,10 +126,3 @@ dropout = 0.0
 [model.graph]
 hiddens = [64]
 attn_drop = 0.0
-
-# Paths configuration
-[paths]
-data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
-result_dir = "result/"
-chunks_dir = "chunks/"
-cache_dir = ".cache/"
