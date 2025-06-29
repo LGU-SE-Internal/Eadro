@@ -1,0 +1,406 @@
+2025-06-29 15:30:28.754 | INFO     | __main__:get_device:84 - Using GPU...
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:149 - Original label distribution:
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service -1: 15366 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 7: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 23: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 5: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 25: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 9: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 8: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 15: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 0: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 14: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 21: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 11: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 3: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 2: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 10: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 22: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 6: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 4: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 18: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 19: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 24: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 12: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 13: 1773 samples
+2025-06-29 15:30:29.745 | INFO     | __main__:load_data:151 - Service 17: 1773 samples
+2025-06-29 15:30:29.746 | INFO     | __main__:load_data:151 - Service 26: 1773 samples
+2025-06-29 15:30:29.746 | INFO     | __main__:load_data:151 - Service 1: 1773 samples
+2025-06-29 15:30:29.746 | INFO     | __main__:load_data:151 - Service 16: 1773 samples
+2025-06-29 15:30:29.746 | INFO     | __main__:load_data:151 - Service 20: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:167 - Downsampled label -1 from 15366 to 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:172 - Balanced label distribution:
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service -1: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 7: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 23: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 5: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 25: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 9: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 8: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 15: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 0: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 14: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 21: 1773 samples
+2025-06-29 15:30:29.747 | INFO     | __main__:load_data:174 - Service 11: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 3: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 2: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 10: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 22: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 6: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 4: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 18: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 19: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 24: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 12: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 13: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 17: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 26: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 1: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 16: 1773 samples
+2025-06-29 15:30:29.748 | INFO     | __main__:load_data:174 - Service 20: 1773 samples
+2025-06-29 15:30:29.760 | INFO     | __main__:load_data:195 - Loaded 34748 training samples and 14896 test samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:211 - Training set label distribution:
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 1: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 26: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 0: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 7: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service -1: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 19: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 21: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 10: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 12: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 6: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 9: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 5: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 15: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 18: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 23: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 11: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 17: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 25: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 2: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 8: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 22: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 14: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 3: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 16: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 13: 1241 samples
+2025-06-29 15:30:29.771 | INFO     | __main__:load_data:213 - Service 24: 1241 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:213 - Service 20: 1241 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:213 - Service 4: 1241 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:215 - Test set label distribution:
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 5: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 6: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 2: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 21: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 1: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 25: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 7: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 4: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 9: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 0: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 23: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 10: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 15: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 8: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 17: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 20: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 18: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 24: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 3: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 16: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 14: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 11: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 12: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service -1: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 26: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 22: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 19: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:217 - Service 13: 532 samples
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:219 - Number of services: 27
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:220 - Number of log templates: 80
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:221 - Number of metrics: 7
+2025-06-29 15:30:29.772 | INFO     | __main__:load_data:222 - Number of service calling edges: 10
+2025-06-29 15:30:29.788 | INFO     | __main__:__init__:47 - Pre-loading 34748 graphs...
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:69 - Label distribution:
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 2: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 22: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 17: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 13: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 7: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 0: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 23: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 16: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 26: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 21: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 15: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 10: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 6: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 19: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 9: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service -1: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 8: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 25: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 12: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 11: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 4: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 5: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 14: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 3: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 24: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 20: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 1: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:71 - Service 18: 1241 samples
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:73 - Successfully pre-loaded 34748 graphs
+2025-06-29 15:30:32.476 | INFO     | __main__:__init__:47 - Pre-loading 14896 graphs...
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:69 - Label distribution:
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 5: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 6: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 2: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 21: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 1: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 25: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 7: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 4: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 9: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 0: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 23: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 10: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 15: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 8: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 17: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 20: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 18: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 24: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 3: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 16: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 14: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 11: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 12: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service -1: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 26: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 22: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 19: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:71 - Service 13: 532 samples
+2025-06-29 15:30:33.599 | INFO     | __main__:__init__:73 - Successfully pre-loaded 14896 graphs
+2025-06-29 15:30:37.884 | INFO     | src.eadro.base:fit:234 - Epoch 1/200, training loss: 3.01306, lr: 0.001000 [3.94s]
+2025-06-29 15:30:40.907 | INFO     | src.eadro.base:fit:234 - Epoch 2/200, training loss: 2.10430, lr: 0.001000 [3.02s]
+2025-06-29 15:30:43.882 | INFO     | src.eadro.base:fit:234 - Epoch 3/200, training loss: 1.73135, lr: 0.001000 [2.97s]
+2025-06-29 15:30:46.859 | INFO     | src.eadro.base:fit:234 - Epoch 4/200, training loss: 1.67648, lr: 0.001000 [2.98s]
+2025-06-29 15:30:49.819 | INFO     | src.eadro.base:fit:234 - Epoch 5/200, training loss: 1.62997, lr: 0.001000 [2.96s]
+2025-06-29 15:30:52.822 | INFO     | src.eadro.base:fit:234 - Epoch 6/200, training loss: 1.55555, lr: 0.001000 [3.00s]
+2025-06-29 15:30:55.880 | INFO     | src.eadro.base:fit:234 - Epoch 7/200, training loss: 1.52746, lr: 0.001000 [3.06s]
+2025-06-29 15:30:58.868 | INFO     | src.eadro.base:fit:234 - Epoch 8/200, training loss: 1.49414, lr: 0.001000 [2.99s]
+2025-06-29 15:31:01.813 | INFO     | src.eadro.base:fit:234 - Epoch 9/200, training loss: 1.46728, lr: 0.001000 [2.94s]
+2025-06-29 15:31:14.706 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9905, Rec: 0.9973, Pre: 0.9838, HR@1: 0.4339, ndcg@1: 0.4339, HR@3: 0.6892, ndcg@3: 0.5839, HR@5: 0.8078, ndcg@5: 0.6329
+2025-06-29 15:31:17.666 | INFO     | src.eadro.base:fit:234 - Epoch 10/200, training loss: 1.44200, lr: 0.000990 [2.96s]
+2025-06-29 15:31:20.626 | INFO     | src.eadro.base:fit:234 - Epoch 11/200, training loss: 1.44010, lr: 0.000990 [2.96s]
+2025-06-29 15:31:23.601 | INFO     | src.eadro.base:fit:234 - Epoch 12/200, training loss: 1.41535, lr: 0.000990 [2.98s]
+2025-06-29 15:31:26.634 | INFO     | src.eadro.base:fit:234 - Epoch 13/200, training loss: 1.36390, lr: 0.000990 [3.03s]
+2025-06-29 15:31:29.611 | INFO     | src.eadro.base:fit:234 - Epoch 14/200, training loss: 1.36033, lr: 0.000990 [2.98s]
+2025-06-29 15:31:32.559 | INFO     | src.eadro.base:fit:234 - Epoch 15/200, training loss: 1.33704, lr: 0.000990 [2.95s]
+2025-06-29 15:31:35.558 | INFO     | src.eadro.base:fit:234 - Epoch 16/200, training loss: 1.28773, lr: 0.000990 [3.00s]
+2025-06-29 15:31:38.570 | INFO     | src.eadro.base:fit:234 - Epoch 17/200, training loss: 1.21334, lr: 0.000990 [3.01s]
+2025-06-29 15:31:41.514 | INFO     | src.eadro.base:fit:234 - Epoch 18/200, training loss: 1.13565, lr: 0.000990 [2.94s]
+2025-06-29 15:31:44.488 | INFO     | src.eadro.base:fit:234 - Epoch 19/200, training loss: 1.13821, lr: 0.000990 [2.97s]
+2025-06-29 15:31:57.307 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9977, Rec: 0.9985, Pre: 0.9970, HR@1: 0.5214, ndcg@1: 0.5214, HR@3: 0.8385, ndcg@3: 0.7061, HR@5: 0.9302, ndcg@5: 0.7440
+2025-06-29 15:32:00.314 | INFO     | src.eadro.base:fit:234 - Epoch 20/200, training loss: 1.00356, lr: 0.000980 [3.00s]
+2025-06-29 15:32:03.320 | INFO     | src.eadro.base:fit:234 - Epoch 21/200, training loss: 1.03405, lr: 0.000980 [3.01s]
+2025-06-29 15:32:06.388 | INFO     | src.eadro.base:fit:234 - Epoch 22/200, training loss: 1.00220, lr: 0.000980 [3.07s]
+2025-06-29 15:32:09.403 | INFO     | src.eadro.base:fit:234 - Epoch 23/200, training loss: 0.95922, lr: 0.000980 [3.02s]
+2025-06-29 15:32:12.455 | INFO     | src.eadro.base:fit:234 - Epoch 24/200, training loss: 0.97187, lr: 0.000980 [3.05s]
+2025-06-29 15:32:15.478 | INFO     | src.eadro.base:fit:234 - Epoch 25/200, training loss: 0.88086, lr: 0.000980 [3.02s]
+2025-06-29 15:32:18.557 | INFO     | src.eadro.base:fit:234 - Epoch 26/200, training loss: 0.82036, lr: 0.000980 [3.08s]
+2025-06-29 15:32:21.672 | INFO     | src.eadro.base:fit:234 - Epoch 27/200, training loss: 0.88958, lr: 0.000980 [3.11s]
+2025-06-29 15:32:24.786 | INFO     | src.eadro.base:fit:234 - Epoch 28/200, training loss: 0.81686, lr: 0.000980 [3.11s]
+2025-06-29 15:32:27.882 | INFO     | src.eadro.base:fit:234 - Epoch 29/200, training loss: 0.81289, lr: 0.000980 [3.10s]
+2025-06-29 15:32:40.471 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9901, Rec: 0.9804, Pre: 1.0000, HR@1: 0.5932, ndcg@1: 0.5932, HR@3: 0.8931, ndcg@3: 0.7714, HR@5: 0.9409, ndcg@5: 0.7913
+2025-06-29 15:32:43.510 | INFO     | src.eadro.base:fit:234 - Epoch 30/200, training loss: 0.78809, lr: 0.000970 [3.04s]
+2025-06-29 15:32:46.453 | INFO     | src.eadro.base:fit:234 - Epoch 31/200, training loss: 0.80530, lr: 0.000970 [2.94s]
+2025-06-29 15:32:49.396 | INFO     | src.eadro.base:fit:234 - Epoch 32/200, training loss: 0.84114, lr: 0.000970 [2.94s]
+2025-06-29 15:32:52.389 | INFO     | src.eadro.base:fit:234 - Epoch 33/200, training loss: 0.71020, lr: 0.000970 [2.99s]
+2025-06-29 15:32:55.474 | INFO     | src.eadro.base:fit:234 - Epoch 34/200, training loss: 0.73776, lr: 0.000970 [3.08s]
+2025-06-29 15:32:58.471 | INFO     | src.eadro.base:fit:234 - Epoch 35/200, training loss: 0.69941, lr: 0.000970 [3.00s]
+2025-06-29 15:33:01.443 | INFO     | src.eadro.base:fit:234 - Epoch 36/200, training loss: 0.69412, lr: 0.000970 [2.97s]
+2025-06-29 15:33:04.436 | INFO     | src.eadro.base:fit:234 - Epoch 37/200, training loss: 0.70442, lr: 0.000970 [2.99s]
+2025-06-29 15:33:07.432 | INFO     | src.eadro.base:fit:234 - Epoch 38/200, training loss: 0.71025, lr: 0.000970 [3.00s]
+2025-06-29 15:33:10.383 | INFO     | src.eadro.base:fit:234 - Epoch 39/200, training loss: 0.76963, lr: 0.000970 [2.95s]
+2025-06-29 15:33:23.087 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9935, Rec: 0.9872, Pre: 0.9999, HR@1: 0.6142, ndcg@1: 0.6142, HR@3: 0.9045, ndcg@3: 0.7866, HR@5: 0.9485, ndcg@5: 0.8049
+2025-06-29 15:33:26.041 | INFO     | src.eadro.base:fit:234 - Epoch 40/200, training loss: 0.69561, lr: 0.000961 [2.95s]
+2025-06-29 15:33:28.993 | INFO     | src.eadro.base:fit:234 - Epoch 41/200, training loss: 0.64647, lr: 0.000961 [2.95s]
+2025-06-29 15:33:32.014 | INFO     | src.eadro.base:fit:234 - Epoch 42/200, training loss: 0.70654, lr: 0.000961 [3.02s]
+2025-06-29 15:33:34.968 | INFO     | src.eadro.base:fit:234 - Epoch 43/200, training loss: 0.66008, lr: 0.000961 [2.95s]
+2025-06-29 15:33:37.947 | INFO     | src.eadro.base:fit:234 - Epoch 44/200, training loss: 0.64963, lr: 0.000961 [2.98s]
+2025-06-29 15:33:40.943 | INFO     | src.eadro.base:fit:234 - Epoch 45/200, training loss: 0.69042, lr: 0.000961 [3.00s]
+2025-06-29 15:33:43.903 | INFO     | src.eadro.base:fit:234 - Epoch 46/200, training loss: 0.69948, lr: 0.000961 [2.96s]
+2025-06-29 15:33:46.939 | INFO     | src.eadro.base:fit:234 - Epoch 47/200, training loss: 0.63515, lr: 0.000961 [3.04s]
+2025-06-29 15:33:49.954 | INFO     | src.eadro.base:fit:234 - Epoch 48/200, training loss: 0.70234, lr: 0.000961 [3.01s]
+2025-06-29 15:33:53.040 | INFO     | src.eadro.base:fit:234 - Epoch 49/200, training loss: 0.60048, lr: 0.000961 [3.09s]
+2025-06-29 15:34:05.740 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9926, Rec: 0.9853, Pre: 1.0000, HR@1: 0.5715, ndcg@1: 0.5715, HR@3: 0.8882, ndcg@3: 0.7582, HR@5: 0.9433, ndcg@5: 0.7812
+2025-06-29 15:34:08.785 | INFO     | src.eadro.base:fit:234 - Epoch 50/200, training loss: 0.65363, lr: 0.000951 [3.04s]
+2025-06-29 15:34:11.840 | INFO     | src.eadro.base:fit:234 - Epoch 51/200, training loss: 0.64111, lr: 0.000951 [3.05s]
+2025-06-29 15:34:14.888 | INFO     | src.eadro.base:fit:234 - Epoch 52/200, training loss: 0.63030, lr: 0.000951 [3.05s]
+2025-06-29 15:34:18.212 | INFO     | src.eadro.base:fit:234 - Epoch 53/200, training loss: 0.62287, lr: 0.000951 [3.32s]
+2025-06-29 15:34:21.433 | INFO     | src.eadro.base:fit:234 - Epoch 54/200, training loss: 0.63224, lr: 0.000951 [3.22s]
+2025-06-29 15:34:24.547 | INFO     | src.eadro.base:fit:234 - Epoch 55/200, training loss: 0.61926, lr: 0.000951 [3.11s]
+2025-06-29 15:34:27.805 | INFO     | src.eadro.base:fit:234 - Epoch 56/200, training loss: 0.68479, lr: 0.000951 [3.26s]
+2025-06-29 15:34:30.968 | INFO     | src.eadro.base:fit:234 - Epoch 57/200, training loss: 0.58306, lr: 0.000951 [3.16s]
+2025-06-29 15:34:34.120 | INFO     | src.eadro.base:fit:234 - Epoch 58/200, training loss: 0.60449, lr: 0.000951 [3.15s]
+2025-06-29 15:34:37.323 | INFO     | src.eadro.base:fit:234 - Epoch 59/200, training loss: 0.61111, lr: 0.000951 [3.20s]
+2025-06-29 15:34:50.190 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9986, Rec: 0.9999, Pre: 0.9972, HR@1: 0.6483, ndcg@1: 0.6483, HR@3: 0.9058, ndcg@3: 0.7991, HR@5: 0.9656, ndcg@5: 0.8241
+2025-06-29 15:34:53.459 | INFO     | src.eadro.base:fit:234 - Epoch 60/200, training loss: 0.60332, lr: 0.000941 [3.27s]
+2025-06-29 15:34:56.541 | INFO     | src.eadro.base:fit:234 - Epoch 61/200, training loss: 0.59771, lr: 0.000941 [3.08s]
+2025-06-29 15:34:59.657 | INFO     | src.eadro.base:fit:234 - Epoch 62/200, training loss: 0.69713, lr: 0.000941 [3.12s]
+2025-06-29 15:35:02.754 | INFO     | src.eadro.base:fit:234 - Epoch 63/200, training loss: 0.57604, lr: 0.000941 [3.10s]
+2025-06-29 15:35:05.981 | INFO     | src.eadro.base:fit:234 - Epoch 64/200, training loss: 0.57058, lr: 0.000941 [3.23s]
+2025-06-29 15:35:09.265 | INFO     | src.eadro.base:fit:234 - Epoch 65/200, training loss: 0.57414, lr: 0.000941 [3.28s]
+2025-06-29 15:35:12.524 | INFO     | src.eadro.base:fit:234 - Epoch 66/200, training loss: 0.57725, lr: 0.000941 [3.26s]
+2025-06-29 15:35:15.580 | INFO     | src.eadro.base:fit:234 - Epoch 67/200, training loss: 0.62411, lr: 0.000941 [3.06s]
+2025-06-29 15:35:18.664 | INFO     | src.eadro.base:fit:234 - Epoch 68/200, training loss: 0.53267, lr: 0.000941 [3.08s]
+2025-06-29 15:35:21.648 | INFO     | src.eadro.base:fit:234 - Epoch 69/200, training loss: 0.56166, lr: 0.000941 [2.98s]
+2025-06-29 15:35:34.232 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9902, Rec: 0.9807, Pre: 0.9999, HR@1: 0.4750, ndcg@1: 0.4750, HR@3: 0.8451, ndcg@3: 0.6905, HR@5: 0.9189, ndcg@5: 0.7213
+2025-06-29 15:35:37.410 | INFO     | src.eadro.base:fit:234 - Epoch 70/200, training loss: 0.55035, lr: 0.000932 [3.18s]
+2025-06-29 15:35:40.509 | INFO     | src.eadro.base:fit:234 - Epoch 71/200, training loss: 0.59883, lr: 0.000932 [3.10s]
+2025-06-29 15:35:43.604 | INFO     | src.eadro.base:fit:234 - Epoch 72/200, training loss: 0.56802, lr: 0.000932 [3.10s]
+2025-06-29 15:35:46.671 | INFO     | src.eadro.base:fit:234 - Epoch 73/200, training loss: 0.54000, lr: 0.000932 [3.07s]
+2025-06-29 15:35:49.819 | INFO     | src.eadro.base:fit:234 - Epoch 74/200, training loss: 0.54333, lr: 0.000932 [3.15s]
+2025-06-29 15:35:53.115 | INFO     | src.eadro.base:fit:234 - Epoch 75/200, training loss: 0.49337, lr: 0.000932 [3.30s]
+2025-06-29 15:35:56.195 | INFO     | src.eadro.base:fit:234 - Epoch 76/200, training loss: 0.52549, lr: 0.000932 [3.08s]
+2025-06-29 15:35:59.259 | INFO     | src.eadro.base:fit:234 - Epoch 77/200, training loss: 0.49175, lr: 0.000932 [3.06s]
+2025-06-29 15:36:02.301 | INFO     | src.eadro.base:fit:234 - Epoch 78/200, training loss: 0.46632, lr: 0.000932 [3.04s]
+2025-06-29 15:36:05.278 | INFO     | src.eadro.base:fit:234 - Epoch 79/200, training loss: 0.64151, lr: 0.000932 [2.98s]
+2025-06-29 15:36:18.115 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9996, Rec: 0.9997, Pre: 0.9995, HR@1: 0.7713, ndcg@1: 0.7713, HR@3: 0.9567, ndcg@3: 0.8848, HR@5: 0.9638, ndcg@5: 0.8877
+2025-06-29 15:36:21.137 | INFO     | src.eadro.base:fit:234 - Epoch 80/200, training loss: 0.49099, lr: 0.000923 [3.02s]
+2025-06-29 15:36:24.099 | INFO     | src.eadro.base:fit:234 - Epoch 81/200, training loss: 0.49159, lr: 0.000923 [2.96s]
+2025-06-29 15:36:27.066 | INFO     | src.eadro.base:fit:234 - Epoch 82/200, training loss: 0.49785, lr: 0.000923 [2.97s]
+2025-06-29 15:36:30.138 | INFO     | src.eadro.base:fit:234 - Epoch 83/200, training loss: 0.50704, lr: 0.000923 [3.07s]
+2025-06-29 15:36:33.090 | INFO     | src.eadro.base:fit:234 - Epoch 84/200, training loss: 0.49738, lr: 0.000923 [2.95s]
+2025-06-29 15:36:36.098 | INFO     | src.eadro.base:fit:234 - Epoch 85/200, training loss: 0.45942, lr: 0.000923 [3.01s]
+2025-06-29 15:36:39.152 | INFO     | src.eadro.base:fit:234 - Epoch 86/200, training loss: 0.48081, lr: 0.000923 [3.05s]
+2025-06-29 15:36:42.112 | INFO     | src.eadro.base:fit:234 - Epoch 87/200, training loss: 0.47701, lr: 0.000923 [2.96s]
+2025-06-29 15:36:45.155 | INFO     | src.eadro.base:fit:234 - Epoch 88/200, training loss: 0.47995, lr: 0.000923 [3.04s]
+2025-06-29 15:36:48.197 | INFO     | src.eadro.base:fit:234 - Epoch 89/200, training loss: 0.48679, lr: 0.000923 [3.04s]
+2025-06-29 15:37:01.014 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9849, Rec: 1.0000, Pre: 0.9703, HR@1: 0.5862, ndcg@1: 0.5862, HR@3: 0.8678, ndcg@3: 0.7502, HR@5: 0.9617, ndcg@5: 0.7891
+2025-06-29 15:37:04.100 | INFO     | src.eadro.base:fit:234 - Epoch 90/200, training loss: 0.45622, lr: 0.000914 [3.08s]
+2025-06-29 15:37:07.171 | INFO     | src.eadro.base:fit:234 - Epoch 91/200, training loss: 0.40436, lr: 0.000914 [3.07s]
+2025-06-29 15:37:10.346 | INFO     | src.eadro.base:fit:234 - Epoch 92/200, training loss: 0.51306, lr: 0.000914 [3.17s]
+2025-06-29 15:37:13.537 | INFO     | src.eadro.base:fit:234 - Epoch 93/200, training loss: 0.47768, lr: 0.000914 [3.19s]
+2025-06-29 15:37:16.565 | INFO     | src.eadro.base:fit:234 - Epoch 94/200, training loss: 0.43976, lr: 0.000914 [3.03s]
+2025-06-29 15:37:19.529 | INFO     | src.eadro.base:fit:234 - Epoch 95/200, training loss: 0.41282, lr: 0.000914 [2.96s]
+2025-06-29 15:37:22.475 | INFO     | src.eadro.base:fit:234 - Epoch 96/200, training loss: 0.38736, lr: 0.000914 [2.95s]
+2025-06-29 15:37:25.434 | INFO     | src.eadro.base:fit:234 - Epoch 97/200, training loss: 0.39411, lr: 0.000914 [2.96s]
+2025-06-29 15:37:28.390 | INFO     | src.eadro.base:fit:234 - Epoch 98/200, training loss: 0.46864, lr: 0.000914 [2.96s]
+2025-06-29 15:37:31.427 | INFO     | src.eadro.base:fit:234 - Epoch 99/200, training loss: 0.42832, lr: 0.000914 [3.04s]
+2025-06-29 15:37:44.270 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9999, Rec: 0.9998, Pre: 1.0000, HR@1: 0.8169, ndcg@1: 0.8169, HR@3: 0.9500, ndcg@3: 0.8981, HR@5: 0.9636, ndcg@5: 0.9038
+2025-06-29 15:37:47.242 | INFO     | src.eadro.base:fit:234 - Epoch 100/200, training loss: 0.37423, lr: 0.000904 [2.97s]
+2025-06-29 15:37:50.217 | INFO     | src.eadro.base:fit:234 - Epoch 101/200, training loss: 0.44040, lr: 0.000904 [2.97s]
+2025-06-29 15:37:53.171 | INFO     | src.eadro.base:fit:234 - Epoch 102/200, training loss: 0.39540, lr: 0.000904 [2.95s]
+2025-06-29 15:37:56.187 | INFO     | src.eadro.base:fit:234 - Epoch 103/200, training loss: 0.37540, lr: 0.000904 [3.02s]
+2025-06-29 15:37:59.169 | INFO     | src.eadro.base:fit:234 - Epoch 104/200, training loss: 0.41418, lr: 0.000904 [2.98s]
+2025-06-29 15:38:02.118 | INFO     | src.eadro.base:fit:234 - Epoch 105/200, training loss: 0.36856, lr: 0.000904 [2.95s]
+2025-06-29 15:38:05.062 | INFO     | src.eadro.base:fit:234 - Epoch 106/200, training loss: 0.47958, lr: 0.000904 [2.94s]
+2025-06-29 15:38:08.002 | INFO     | src.eadro.base:fit:234 - Epoch 107/200, training loss: 0.35939, lr: 0.000904 [2.94s]
+2025-06-29 15:38:11.007 | INFO     | src.eadro.base:fit:234 - Epoch 108/200, training loss: 0.36833, lr: 0.000904 [3.00s]
+2025-06-29 15:38:14.047 | INFO     | src.eadro.base:fit:234 - Epoch 109/200, training loss: 0.34503, lr: 0.000904 [3.04s]
+2025-06-29 15:38:26.877 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9858, Rec: 1.0000, Pre: 0.9719, HR@1: 0.5934, ndcg@1: 0.5934, HR@3: 0.9271, ndcg@3: 0.7899, HR@5: 0.9873, ndcg@5: 0.8155
+2025-06-29 15:38:29.862 | INFO     | src.eadro.base:fit:234 - Epoch 110/200, training loss: 0.39492, lr: 0.000895 [2.98s]
+2025-06-29 15:38:32.816 | INFO     | src.eadro.base:fit:234 - Epoch 111/200, training loss: 0.36291, lr: 0.000895 [2.95s]
+2025-06-29 15:38:35.820 | INFO     | src.eadro.base:fit:234 - Epoch 112/200, training loss: 0.35996, lr: 0.000895 [3.00s]
+2025-06-29 15:38:38.878 | INFO     | src.eadro.base:fit:234 - Epoch 113/200, training loss: 0.32729, lr: 0.000895 [3.06s]
+2025-06-29 15:38:41.959 | INFO     | src.eadro.base:fit:234 - Epoch 114/200, training loss: 0.35729, lr: 0.000895 [3.08s]
+2025-06-29 15:38:45.029 | INFO     | src.eadro.base:fit:234 - Epoch 115/200, training loss: 0.35889, lr: 0.000895 [3.07s]
+2025-06-29 15:38:47.985 | INFO     | src.eadro.base:fit:234 - Epoch 116/200, training loss: 0.29064, lr: 0.000895 [2.96s]
+2025-06-29 15:38:50.971 | INFO     | src.eadro.base:fit:234 - Epoch 117/200, training loss: 0.33452, lr: 0.000895 [2.99s]
+2025-06-29 15:38:53.951 | INFO     | src.eadro.base:fit:234 - Epoch 118/200, training loss: 0.32587, lr: 0.000895 [2.98s]
+2025-06-29 15:38:56.917 | INFO     | src.eadro.base:fit:234 - Epoch 119/200, training loss: 0.33524, lr: 0.000895 [2.97s]
+2025-06-29 15:39:09.707 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9997, Rec: 1.0000, Pre: 0.9995, HR@1: 0.7771, ndcg@1: 0.7771, HR@3: 0.9520, ndcg@3: 0.8829, HR@5: 0.9622, ndcg@5: 0.8871
+2025-06-29 15:39:12.722 | INFO     | src.eadro.base:fit:234 - Epoch 120/200, training loss: 0.35736, lr: 0.000886 [3.01s]
+2025-06-29 15:39:15.674 | INFO     | src.eadro.base:fit:234 - Epoch 121/200, training loss: 0.34644, lr: 0.000886 [2.95s]
+2025-06-29 15:39:18.617 | INFO     | src.eadro.base:fit:234 - Epoch 122/200, training loss: 0.35743, lr: 0.000886 [2.94s]
+2025-06-29 15:39:21.585 | INFO     | src.eadro.base:fit:234 - Epoch 123/200, training loss: 0.31650, lr: 0.000886 [2.97s]
+2025-06-29 15:39:24.553 | INFO     | src.eadro.base:fit:234 - Epoch 124/200, training loss: 0.31106, lr: 0.000886 [2.97s]
+2025-06-29 15:39:27.500 | INFO     | src.eadro.base:fit:234 - Epoch 125/200, training loss: 0.32762, lr: 0.000886 [2.95s]
+2025-06-29 15:39:30.445 | INFO     | src.eadro.base:fit:234 - Epoch 126/200, training loss: 0.29241, lr: 0.000886 [2.94s]
+2025-06-29 15:39:33.402 | INFO     | src.eadro.base:fit:234 - Epoch 127/200, training loss: 0.33341, lr: 0.000886 [2.96s]
+2025-06-29 15:39:36.346 | INFO     | src.eadro.base:fit:234 - Epoch 128/200, training loss: 0.32998, lr: 0.000886 [2.94s]
+2025-06-29 15:39:39.376 | INFO     | src.eadro.base:fit:234 - Epoch 129/200, training loss: 0.30678, lr: 0.000886 [3.03s]
+2025-06-29 15:39:52.194 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 1.0000, Rec: 1.0000, Pre: 0.9999, HR@1: 0.8144, ndcg@1: 0.8144, HR@3: 0.9588, ndcg@3: 0.9023, HR@5: 0.9633, ndcg@5: 0.9042
+2025-06-29 15:39:55.200 | INFO     | src.eadro.base:fit:234 - Epoch 130/200, training loss: 0.30367, lr: 0.000878 [3.01s]
+2025-06-29 15:39:58.256 | INFO     | src.eadro.base:fit:234 - Epoch 131/200, training loss: 0.39167, lr: 0.000878 [3.06s]
+2025-06-29 15:40:01.245 | INFO     | src.eadro.base:fit:234 - Epoch 132/200, training loss: 0.30290, lr: 0.000878 [2.99s]
+2025-06-29 15:40:04.264 | INFO     | src.eadro.base:fit:234 - Epoch 133/200, training loss: 0.27712, lr: 0.000878 [3.02s]
+2025-06-29 15:40:07.260 | INFO     | src.eadro.base:fit:234 - Epoch 134/200, training loss: 0.29172, lr: 0.000878 [3.00s]
+2025-06-29 15:40:10.208 | INFO     | src.eadro.base:fit:234 - Epoch 135/200, training loss: 0.30253, lr: 0.000878 [2.95s]
+2025-06-29 15:40:13.222 | INFO     | src.eadro.base:fit:234 - Epoch 136/200, training loss: 0.33953, lr: 0.000878 [3.01s]
+2025-06-29 15:40:16.218 | INFO     | src.eadro.base:fit:234 - Epoch 137/200, training loss: 0.29682, lr: 0.000878 [3.00s]
+2025-06-29 15:40:19.230 | INFO     | src.eadro.base:fit:234 - Epoch 138/200, training loss: 0.28406, lr: 0.000878 [3.01s]
+2025-06-29 15:40:22.259 | INFO     | src.eadro.base:fit:234 - Epoch 139/200, training loss: 0.27995, lr: 0.000878 [3.03s]
+2025-06-29 15:40:35.101 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9889, Rec: 0.9999, Pre: 0.9782, HR@1: 0.7483, ndcg@1: 0.7483, HR@3: 0.9765, ndcg@3: 0.8841, HR@5: 0.9850, ndcg@5: 0.8876
+2025-06-29 15:40:38.055 | INFO     | src.eadro.base:fit:234 - Epoch 140/200, training loss: 0.28638, lr: 0.000869 [2.95s]
+2025-06-29 15:40:40.998 | INFO     | src.eadro.base:fit:234 - Epoch 141/200, training loss: 0.31536, lr: 0.000869 [2.94s]
+2025-06-29 15:40:43.955 | INFO     | src.eadro.base:fit:234 - Epoch 142/200, training loss: 0.29578, lr: 0.000869 [2.96s]
+2025-06-29 15:40:46.919 | INFO     | src.eadro.base:fit:234 - Epoch 143/200, training loss: 0.31441, lr: 0.000869 [2.96s]
+2025-06-29 15:40:49.939 | INFO     | src.eadro.base:fit:234 - Epoch 144/200, training loss: 0.30428, lr: 0.000869 [3.02s]
+2025-06-29 15:40:52.896 | INFO     | src.eadro.base:fit:234 - Epoch 145/200, training loss: 0.26692, lr: 0.000869 [2.96s]
+2025-06-29 15:40:55.929 | INFO     | src.eadro.base:fit:234 - Epoch 146/200, training loss: 0.30142, lr: 0.000869 [3.03s]
+2025-06-29 15:40:58.941 | INFO     | src.eadro.base:fit:234 - Epoch 147/200, training loss: 0.27206, lr: 0.000869 [3.01s]
+2025-06-29 15:41:01.939 | INFO     | src.eadro.base:fit:234 - Epoch 148/200, training loss: 0.29100, lr: 0.000869 [3.00s]
+2025-06-29 15:41:04.885 | INFO     | src.eadro.base:fit:234 - Epoch 149/200, training loss: 0.29966, lr: 0.000869 [2.95s]
+2025-06-29 15:41:17.721 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9996, Rec: 1.0000, Pre: 0.9992, HR@1: 0.7280, ndcg@1: 0.7280, HR@3: 0.9563, ndcg@3: 0.8642, HR@5: 0.9643, ndcg@5: 0.8676
+2025-06-29 15:41:20.687 | INFO     | src.eadro.base:fit:234 - Epoch 150/200, training loss: 0.26009, lr: 0.000860 [2.96s]
+2025-06-29 15:41:23.651 | INFO     | src.eadro.base:fit:234 - Epoch 151/200, training loss: 0.27980, lr: 0.000860 [2.96s]
+2025-06-29 15:41:26.605 | INFO     | src.eadro.base:fit:234 - Epoch 152/200, training loss: 0.27359, lr: 0.000860 [2.95s]
+2025-06-29 15:41:29.615 | INFO     | src.eadro.base:fit:234 - Epoch 153/200, training loss: 0.26053, lr: 0.000860 [3.01s]
+2025-06-29 15:41:32.604 | INFO     | src.eadro.base:fit:234 - Epoch 154/200, training loss: 0.28030, lr: 0.000860 [2.99s]
+2025-06-29 15:41:35.579 | INFO     | src.eadro.base:fit:234 - Epoch 155/200, training loss: 0.26888, lr: 0.000860 [2.97s]
+2025-06-29 15:41:38.527 | INFO     | src.eadro.base:fit:234 - Epoch 156/200, training loss: 0.31658, lr: 0.000860 [2.95s]
+2025-06-29 15:41:41.472 | INFO     | src.eadro.base:fit:234 - Epoch 157/200, training loss: 0.30754, lr: 0.000860 [2.95s]
+2025-06-29 15:41:44.480 | INFO     | src.eadro.base:fit:234 - Epoch 158/200, training loss: 0.27209, lr: 0.000860 [3.01s]
+2025-06-29 15:41:47.458 | INFO     | src.eadro.base:fit:234 - Epoch 159/200, training loss: 0.28574, lr: 0.000860 [2.98s]
+2025-06-29 15:42:00.266 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 1.0000, Rec: 1.0000, Pre: 0.9999, HR@1: 0.8609, ndcg@1: 0.8609, HR@3: 0.9615, ndcg@3: 0.9235, HR@5: 0.9641, ndcg@5: 0.9246
+2025-06-29 15:42:03.235 | INFO     | src.eadro.base:fit:234 - Epoch 160/200, training loss: 0.28164, lr: 0.000851 [2.97s]
+2025-06-29 15:42:06.235 | INFO     | src.eadro.base:fit:234 - Epoch 161/200, training loss: 0.24069, lr: 0.000851 [3.00s]
+2025-06-29 15:42:09.234 | INFO     | src.eadro.base:fit:234 - Epoch 162/200, training loss: 0.28258, lr: 0.000851 [3.00s]
+2025-06-29 15:42:12.206 | INFO     | src.eadro.base:fit:234 - Epoch 163/200, training loss: 0.29419, lr: 0.000851 [2.97s]
+2025-06-29 15:42:15.198 | INFO     | src.eadro.base:fit:234 - Epoch 164/200, training loss: 0.27436, lr: 0.000851 [2.99s]
+2025-06-29 15:42:18.146 | INFO     | src.eadro.base:fit:234 - Epoch 165/200, training loss: 0.23503, lr: 0.000851 [2.95s]
+2025-06-29 15:42:21.091 | INFO     | src.eadro.base:fit:234 - Epoch 166/200, training loss: 0.32103, lr: 0.000851 [2.94s]
+2025-06-29 15:42:24.040 | INFO     | src.eadro.base:fit:234 - Epoch 167/200, training loss: 0.28202, lr: 0.000851 [2.95s]
+2025-06-29 15:42:27.009 | INFO     | src.eadro.base:fit:234 - Epoch 168/200, training loss: 0.26959, lr: 0.000851 [2.97s]
+2025-06-29 15:42:30.070 | INFO     | src.eadro.base:fit:234 - Epoch 169/200, training loss: 0.25781, lr: 0.000851 [3.06s]
+2025-06-29 15:42:42.890 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9999, Rec: 1.0000, Pre: 0.9999, HR@1: 0.8644, ndcg@1: 0.8644, HR@3: 0.9623, ndcg@3: 0.9254, HR@5: 0.9641, ndcg@5: 0.9262
+2025-06-29 15:42:45.930 | INFO     | src.eadro.base:fit:234 - Epoch 170/200, training loss: 0.24815, lr: 0.000843 [3.04s]
+2025-06-29 15:42:48.872 | INFO     | src.eadro.base:fit:234 - Epoch 171/200, training loss: 0.26130, lr: 0.000843 [2.94s]
+2025-06-29 15:42:51.823 | INFO     | src.eadro.base:fit:234 - Epoch 172/200, training loss: 0.30587, lr: 0.000843 [2.95s]
+2025-06-29 15:42:54.846 | INFO     | src.eadro.base:fit:234 - Epoch 173/200, training loss: 0.26054, lr: 0.000843 [3.02s]
+2025-06-29 15:42:57.989 | INFO     | src.eadro.base:fit:234 - Epoch 174/200, training loss: 0.26164, lr: 0.000843 [3.14s]
+2025-06-29 15:43:01.189 | INFO     | src.eadro.base:fit:234 - Epoch 175/200, training loss: 0.24997, lr: 0.000843 [3.20s]
+2025-06-29 15:43:04.306 | INFO     | src.eadro.base:fit:234 - Epoch 176/200, training loss: 0.25618, lr: 0.000843 [3.12s]
+2025-06-29 15:43:07.683 | INFO     | src.eadro.base:fit:234 - Epoch 177/200, training loss: 0.34293, lr: 0.000843 [3.38s]
+2025-06-29 15:43:10.753 | INFO     | src.eadro.base:fit:234 - Epoch 178/200, training loss: 0.27681, lr: 0.000843 [3.07s]
+2025-06-29 15:43:13.721 | INFO     | src.eadro.base:fit:234 - Epoch 179/200, training loss: 0.24676, lr: 0.000843 [2.97s]
+2025-06-29 15:43:26.538 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 1.0000, Rec: 0.9999, Pre: 1.0000, HR@1: 0.8551, ndcg@1: 0.8551, HR@3: 0.9622, ndcg@3: 0.9219, HR@5: 0.9640, ndcg@5: 0.9226
+2025-06-29 15:43:29.624 | INFO     | src.eadro.base:fit:234 - Epoch 180/200, training loss: 0.27840, lr: 0.000835 [3.08s]
+2025-06-29 15:43:32.574 | INFO     | src.eadro.base:fit:234 - Epoch 181/200, training loss: 0.24184, lr: 0.000835 [2.95s]
+2025-06-29 15:43:35.524 | INFO     | src.eadro.base:fit:234 - Epoch 182/200, training loss: 0.25356, lr: 0.000835 [2.95s]
+2025-06-29 15:43:38.481 | INFO     | src.eadro.base:fit:234 - Epoch 183/200, training loss: 0.23238, lr: 0.000835 [2.96s]
+2025-06-29 15:43:41.427 | INFO     | src.eadro.base:fit:234 - Epoch 184/200, training loss: 0.25839, lr: 0.000835 [2.95s]
+2025-06-29 15:43:44.394 | INFO     | src.eadro.base:fit:234 - Epoch 185/200, training loss: 0.27609, lr: 0.000835 [2.97s]
+2025-06-29 15:43:47.396 | INFO     | src.eadro.base:fit:234 - Epoch 186/200, training loss: 0.28071, lr: 0.000835 [3.00s]
+2025-06-29 15:43:50.360 | INFO     | src.eadro.base:fit:234 - Epoch 187/200, training loss: 0.25693, lr: 0.000835 [2.96s]
+2025-06-29 15:43:53.321 | INFO     | src.eadro.base:fit:234 - Epoch 188/200, training loss: 0.23133, lr: 0.000835 [2.96s]
+2025-06-29 15:43:56.269 | INFO     | src.eadro.base:fit:234 - Epoch 189/200, training loss: 0.22354, lr: 0.000835 [2.95s]
+2025-06-29 15:44:09.105 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9851, Rec: 1.0000, Pre: 0.9707, HR@1: 0.5650, ndcg@1: 0.5650, HR@3: 0.8624, ndcg@3: 0.7403, HR@5: 0.9570, ndcg@5: 0.7792
+2025-06-29 15:44:12.168 | INFO     | src.eadro.base:fit:234 - Epoch 190/200, training loss: 0.22589, lr: 0.000826 [3.06s]
+2025-06-29 15:44:15.188 | INFO     | src.eadro.base:fit:234 - Epoch 191/200, training loss: 0.25259, lr: 0.000826 [3.02s]
+2025-06-29 15:44:18.136 | INFO     | src.eadro.base:fit:234 - Epoch 192/200, training loss: 0.22870, lr: 0.000826 [2.95s]
+2025-06-29 15:44:21.087 | INFO     | src.eadro.base:fit:234 - Epoch 193/200, training loss: 0.24100, lr: 0.000826 [2.95s]
+2025-06-29 15:44:24.060 | INFO     | src.eadro.base:fit:234 - Epoch 194/200, training loss: 0.25911, lr: 0.000826 [2.97s]
+2025-06-29 15:44:27.125 | INFO     | src.eadro.base:fit:234 - Epoch 195/200, training loss: 0.24891, lr: 0.000826 [3.06s]
+2025-06-29 15:44:30.124 | INFO     | src.eadro.base:fit:234 - Epoch 196/200, training loss: 0.26751, lr: 0.000826 [3.00s]
+2025-06-29 15:44:33.175 | INFO     | src.eadro.base:fit:234 - Epoch 197/200, training loss: 0.21900, lr: 0.000826 [3.05s]
+2025-06-29 15:44:36.125 | INFO     | src.eadro.base:fit:234 - Epoch 198/200, training loss: 0.21344, lr: 0.000826 [2.95s]
+2025-06-29 15:44:39.108 | INFO     | src.eadro.base:fit:234 - Epoch 199/200, training loss: 0.26213, lr: 0.000826 [2.98s]
+2025-06-29 15:44:51.935 | INFO     | src.eadro.base:evaluate:156 - Test -- F1: 0.9999, Rec: 0.9999, Pre: 0.9999, HR@1: 0.8601, ndcg@1: 0.8601, HR@3: 0.9621, ndcg@3: 0.9238, HR@5: 0.9639, ndcg@5: 0.9245
+2025-06-29 15:44:55.049 | INFO     | src.eadro.base:fit:234 - Epoch 200/200, training loss: 0.22293, lr: 0.000818 [3.11s]
+2025-06-29 15:44:55.049 | INFO     | src.eadro.base:fit:276 - * Best result got at epoch 169 with HR@1: 0.8644

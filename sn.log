@@ -1,0 +1,46 @@
+2025-06-29 15:21:13.893 | INFO     | __main__:get_device:71 - Using GPU...
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service -1: 15366 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 7: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 23: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 5: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 25: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 9: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 8: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 15: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 0: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 14: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 21: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 11: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 3: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 2: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 10: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 22: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 6: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 4: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 18: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 19: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 24: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 12: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 13: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 17: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 26: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 1: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 16: 1773 windows
+2025-06-29 15:21:15.153 | INFO     | __main__:load_timeseries_data:133 - Service 20: 1773 windows
+2025-06-29 15:21:15.154 | INFO     | __main__:load_timeseries_data:145 - Total training windows: 44263
+2025-06-29 15:21:15.154 | INFO     | __main__:load_timeseries_data:146 - Total testing windows: 18974
+2025-06-29 15:21:15.205 | INFO     | __main__:__init__:44 - Pre-creating graphs...
+2025-06-29 15:21:18.497 | INFO     | __main__:__init__:50 - Created WindowDataset with 44263 pre-computed graphs
+2025-06-29 15:21:18.497 | INFO     | __main__:__init__:44 - Pre-creating graphs...
+2025-06-29 15:21:20.009 | INFO     | __main__:__init__:50 - Created WindowDataset with 18974 pre-computed graphs
+2025-06-29 15:21:24.808 | INFO     | src.eadro.base:fit:233 - Epoch 1/1000, training loss: 3.15699, lr: 0.001000 [4.45s]
+2025-06-29 15:21:28.606 | INFO     | src.eadro.base:fit:233 - Epoch 2/1000, training loss: 2.92500, lr: 0.001000 [3.80s]
+2025-06-29 15:21:32.390 | INFO     | src.eadro.base:fit:233 - Epoch 3/1000, training loss: 2.85690, lr: 0.001000 [3.78s]
+2025-06-29 15:21:36.176 | INFO     | src.eadro.base:fit:233 - Epoch 4/1000, training loss: 2.79976, lr: 0.001000 [3.79s]
+2025-06-29 15:21:49.310 | INFO     | src.eadro.base:evaluate:155 - Test -- F1: 0.8616, Rec: 0.9946, Pre: 0.7600, HR@1: 0.0776, ndcg@1: 0.0776, HR@3: 0.2177, ndcg@3: 0.1570, HR@5: 0.3230, ndcg@5: 0.2000
+2025-06-29 15:21:53.083 | INFO     | src.eadro.base:fit:233 - Epoch 5/1000, training loss: 2.72846, lr: 0.001000 [3.77s]
+2025-06-29 15:21:56.828 | INFO     | src.eadro.base:fit:233 - Epoch 6/1000, training loss: 2.66458, lr: 0.001000 [3.74s]
+2025-06-29 15:22:00.578 | INFO     | src.eadro.base:fit:233 - Epoch 7/1000, training loss: 2.57106, lr: 0.001000 [3.75s]
+2025-06-29 15:22:04.387 | INFO     | src.eadro.base:fit:233 - Epoch 8/1000, training loss: 2.52324, lr: 0.001000 [3.81s]
+2025-06-29 15:22:08.220 | INFO     | src.eadro.base:fit:233 - Epoch 9/1000, training loss: 2.48926, lr: 0.001000 [3.83s]
+2025-06-29 15:22:21.146 | INFO     | src.eadro.base:evaluate:155 - Test -- F1: 0.8619, Rec: 0.9980, Pre: 0.7584, HR@1: 0.1238, ndcg@1: 0.1238, HR@3: 0.2764, ndcg@3: 0.2109, HR@5: 0.3808, ndcg@5: 0.2539

@@ -1,11 +1,12 @@
 from .base import (
     DataProcessor,
     DatasetMetadata,
+    TimeSeriesDataSample,
+    TimeSeriesDatapack,
     BaseParser,
     ServiceMetadata,
     MetricMetadata,
     LogTemplateMetadata,
-    DataSample,
     TraceMetadata,
 )
 from dynaconf import Dynaconf
@@ -14,15 +15,11 @@ import polars as pl
 from tqdm import tqdm
 from .log import DrainProcessor
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
-import pickle
-from .utils import timeit
 import gc
 from functools import lru_cache
 from loguru import logger
-from concurrent.futures import ThreadPoolExecutor
-import threading
 import pytz
 from rcabench.openapi import InjectionApi, ApiClient, Configuration
 import random
@@ -39,7 +36,6 @@ class Processor(DataProcessor):
         self.drain = DrainProcessor(conf="drain.ini", save_path="cache/drain/temp")
 
         self._file_cache = {}
-        self._lock = threading.Lock()  # Add thread safety for shared resources
 
         self.datapack_dir = self.config.root_path  # type: ignore
         assert isinstance(self.datapack_dir, str)
@@ -119,7 +115,7 @@ class Processor(DataProcessor):
         return valid_packs
 
     def _load_datapacks_from_db(self, dataset: str) -> list[Path]:
-        config = Configuration(host="http://10.10.10.220:32080")
+        config = Configuration(host="http://10.10.10.161:8082")
         with ApiClient(configuration=config) as client:
             api = InjectionApi(api_client=client)
             resp = api.api_v1_injections_analysis_with_issues_get()
@@ -130,43 +126,31 @@ class Processor(DataProcessor):
         )
         return sorted([self.datapack_path / name / "converted" for name in case_names])
 
-    def process_dataset(self):
-        """
-        1. create metadata: create_metadata
-        2. process each datapack: process_datapack (with parallel processing)
-           2.1 process log
-           2.2 process metrics
-           2.3 process traces
-           2.4 load ground truth (labels)
-        3. split to chunks(each chunk is the data within a certain time range, will be used for training/testing)
-        """
+    def process_dataset(self) -> TimeSeriesDatapack:
         self.derive_files()
         self.datapacks = self._load_datapacks(self.dataset)
         self.metadata = self.create_metadata()
 
-        samples: list[DataSample] = []
+        time_series_samples: list[TimeSeriesDataSample] = []
 
-        # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            # Submit all datapack processing tasks
-            future_to_datapack = {
-                executor.submit(self.process_datapack, datapack): datapack
-                for datapack in self.datapacks
-            }
+        for datapack in tqdm(self.datapacks, desc="Processing datapacks (continuous)"):
+            ts_sample = self.process_datapack(datapack)
+            if ts_sample.get_time_steps() > 0:
+                time_series_samples.append(ts_sample)
+            else:
+                logger.warning(f"Skipping datapack {datapack} - no valid time steps")
 
-            # Collect results with progress bar
-            for future in tqdm(future_to_datapack, desc="Processing datapacks"):
-                try:
-                    datapack_samples = future.result()
-                    samples.extend(datapack_samples)
-                except Exception as e:
-                    datapack = future_to_datapack[future]
-                    logger.error(f"Error processing datapack {datapack}: {e}")
-                    raise
+        datapack = TimeSeriesDatapack(
+            samples=time_series_samples, metadata=self.metadata
+        )
 
-        with open(f".cache/{self.dataset}_samples.pkl", "wb") as f:
-            pickle.dump(samples, f)
-        return samples
+        datapack_path = f".cache/{self.dataset}_timeseries_datapack.pkl"
+        datapack.save(datapack_path)
+        logger.info(
+            f"Saved {len(time_series_samples)} time series samples to {datapack_path}"
+        )
+
+        return datapack
 
     def derive_files(self):
         def load(f) -> list[str]:
@@ -188,6 +172,9 @@ class Processor(DataProcessor):
             metadata = DatasetMetadata(
                 dataset_name=self.dataset,
             )
+        else:
+            logger.info(f"Loaded existing metadata for {self.dataset} from cache.")
+            return metadata
 
         all_metrics = set()
         all_services = set()
@@ -261,7 +248,6 @@ class Processor(DataProcessor):
                 all_log_templates.update(
                     self.drain.process_batch(random.sample(logs, min(len(logs), 10000)))
                 )
-                logger.info(f"current log templates: {len(all_log_templates)}")
 
             for trace_file in self.trace_files:
                 df = pl.scan_parquet(datapack / trace_file)
@@ -378,6 +364,64 @@ class Processor(DataProcessor):
         metadata.to_json(f".cache/{self.dataset}_metadata.json")
         return metadata
 
+    def process_datapack(self, datapack: Path) -> TimeSeriesDataSample:
+        if self.dataset == "rcabench":
+            (
+                normal_st,
+                normal_et,
+                abnormal_st,
+                abnormal_et,
+                gt_service,
+                fault_type,
+            ) = self.extract_rcabench_labels(datapack)
+        elif self.dataset == "sn" or self.dataset == "tt":
+            normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
+                self.extract_eadro_labels(datapack)
+            )
+        else:
+            raise ValueError(f"Unsupported dataset: {self.dataset}")
+
+        start_time, end_time = self._get_overall_time_range(
+            normal_st, normal_et, abnormal_st, abnormal_et
+        )
+        assert start_time < end_time, (
+            f"Invalid time range for datapack {datapack}: {start_time} >= {end_time}"
+        )
+
+        time_resolution = 1
+        time_steps = int((end_time - start_time).total_seconds() / time_resolution)
+
+        log_series = self._process_logs(datapack, start_time, end_time, time_steps)
+        metric_series = self._process_metrics(
+            datapack, start_time, end_time, time_steps
+        )
+        trace_series = self._process_traces(datapack, start_time, end_time, time_steps)
+
+        normal_periods = []
+        abnormal_periods = []
+
+        if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
+            1970, 1, 1, 0, 0, 0
+        ):
+            normal_periods.append((normal_st, normal_et))
+
+        if abnormal_st != datetime(1970, 1, 1, 0, 0, 0) and abnormal_et != datetime(
+            1970, 1, 1, 0, 0, 0
+        ):
+            abnormal_periods.append((abnormal_st, abnormal_et, gt_service, fault_type))
+
+        return TimeSeriesDataSample(
+            datapack_name=datapack.name,
+            start_time=start_time,
+            end_time=end_time,
+            time_resolution=time_resolution,
+            normal_periods=normal_periods,
+            abnormal_periods=abnormal_periods,
+            log_series=log_series,
+            metric_series=metric_series,
+            trace_series=trace_series,
+        )
+
     def extract_rcabench_labels(
         self, datapack: Path
     ) -> tuple[datetime, datetime, datetime, datetime, str, str]:
@@ -475,126 +519,10 @@ class Processor(DataProcessor):
         abnormal_et = (
             datetime.fromisoformat(label["fault_end_time"])
             if label.get("fault_end_time")
-            else datetime(1970, 1, 1)
+            else datetime(1970, 1, 1, 0, 0, 0)
         )
 
         return normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type
-
-    def process_datapack(self, datapack: Path) -> list[DataSample]:
-        samples = []
-
-        if self.dataset == "rcabench":
-            (
-                normal_st,
-                normal_et,
-                abnormal_st,
-                abnormal_et,
-                gt_service,
-                fault_type,
-            ) = self.extract_rcabench_labels(datapack)
-        elif self.dataset == "sn" or self.dataset == "tt":
-            normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
-                self.extract_eadro_labels(datapack)
-            )
-
-        interval = self.config.sample_interval  # type: ignore
-        sample_step = self.config.sample_step  # type: ignore
-        assert isinstance(sample_step, int), "Sample step should be an integer."
-        assert interval is not None, (
-            f"Sample interval for {self.dataset} is not defined in the config."
-        )
-        assert isinstance(interval, int), "Sample interval should be an integer."
-
-        log_dfs = {}
-        metric_dfs = {}
-        trace_dfs = {}
-
-        time_range = []
-        if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
-            1970, 1, 1, 0, 0, 0
-        ):
-            time_range.append((normal_st, normal_et, "", ""))
-        if abnormal_st != datetime(1970, 1, 1, 0, 0, 0) and abnormal_et != datetime(
-            1970, 1, 1, 0, 0, 0
-        ):
-            time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
-
-        for start, end, fault_type, gt_service in time_range:
-            for log_file in self.log_files:
-                log_dfs[log_file] = pl.scan_parquet(datapack / log_file).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
-
-            for metric_file in self.metric_files:
-                metric_dfs[metric_file] = pl.scan_parquet(
-                    datapack / metric_file
-                ).filter((pl.col("time") >= start) & (pl.col("time") <= end))
-
-            for trace_file in self.trace_files:
-                trace_dfs[trace_file] = pl.scan_parquet(datapack / trace_file).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
-
-            current_time = start
-            while current_time < end:
-                window_end_time = current_time + timedelta(seconds=interval)
-                if window_end_time > end:
-                    break
-
-                sample = DataSample(
-                    abnormal=gt_service != "",
-                    gt_service=gt_service,
-                    fault_type=fault_type,
-                )
-
-                # Process log data
-                for log_file in self.log_files:
-                    window_df = log_dfs[log_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.log = self._process_log_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.log.shape == (
-                        len(self.metadata.services),
-                        len(self.metadata.log_templates) + 1,
-                    )
-
-                # Process metrics data
-                for metric_file in self.metric_files:
-                    window_df = metric_dfs[metric_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.metric = self._process_metrics_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.metric.shape == (
-                        len(self.metadata.services),
-                        interval,
-                        len(self.metadata.metric_names),
-                    )
-
-                # Process trace data
-                for trace_file in self.trace_files:
-                    window_df = trace_dfs[trace_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.trace = self._process_traces_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.trace.shape == (
-                        len(self.metadata.services),
-                        interval,
-                        2,
-                    )
-
-                samples.append(sample)
-                current_time += timedelta(seconds=sample_step)
-
-        return samples
 
     def _smooth_sparse_data(
         self, data: np.ndarray, num_services: int, interval: int, num_features: int
@@ -650,217 +578,216 @@ class Processor(DataProcessor):
                     first_val = time_series[first_idx]
                     data[service_id, : first_idx + 1, feature_id] = first_val
 
-    def _process_log_from_df(
-        self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
+    def _get_overall_time_range(
+        self,
+        normal_st: datetime,
+        normal_et: datetime,
+        abnormal_st: datetime,
+        abnormal_et: datetime,
+    ) -> tuple[datetime, datetime]:
+        times = []
+
+        if normal_st != datetime(1970, 1, 1, 0, 0, 0):
+            times.append(normal_st)
+        if normal_et != datetime(1970, 1, 1, 0, 0, 0):
+            times.append(normal_et)
+        if abnormal_st != datetime(1970, 1, 1, 0, 0, 0):
+            times.append(abnormal_st)
+        if abnormal_et != datetime(1970, 1, 1, 0, 0, 0):
+            times.append(abnormal_et)
+
+        if not times:
+            return datetime(1970, 1, 1, 0, 0, 0), datetime(1970, 1, 1, 0, 0, 1)
+
+        return min(times), max(times)
+
+    def _process_logs(
+        self, datapack: Path, start_time: datetime, end_time: datetime, time_steps: int
     ) -> np.ndarray:
-        """Helper method to process log data from a pre-filtered DataFrame"""
         num_services = len(self.metadata.services)
-        num_templates = len(self.metadata.log_templates) + 1  # +1 for unseen templates
+        num_templates = len(self.metadata.log_templates) + 1
 
-        # Collect data and check if empty
-        df_collected = df.select(["message", "service_name"]).collect()
-        if df_collected.height == 0:
-            result = np.zeros((num_services, num_templates))
-            assert result.shape == (num_services, num_templates), (
-                f"Expected log result shape ({num_services}, {num_templates}), "
-                f"got {result.shape}"
+        result = np.zeros((time_steps, num_services, num_templates))
+
+        for log_file in self.log_files:
+            log_path = datapack / log_file
+            assert log_path.exists()
+
+            df = (
+                pl.scan_parquet(log_path)
+                .filter((pl.col("time") >= start_time) & (pl.col("time") <= end_time))
+                .select(["time", "message", "service_name"])
+                .collect()
             )
-            return result
 
-        # Batch process messages
-        messages = df_collected["message"].to_list()
-        templates = self.drain.process_batch(messages)
+            if df.height == 0:
+                continue
 
-        # Add template column
-        df_with_templates = df_collected.with_columns(pl.Series("template", templates))
+            messages = df["message"].to_list()
+            templates = self.drain.process_batch(messages)
 
-        result = np.zeros((num_services, num_templates))
+            df_with_templates = df.with_columns(pl.Series("template", templates))
 
-        # Calculate counts
-        counts = df_with_templates.group_by(["service_name", "template"]).agg(
-            pl.count().alias("count")
-        )
+            time_deltas = (df_with_templates["time"] - start_time).dt.total_seconds()
+            time_indices = (time_deltas // 1).cast(pl.Int32)
 
-        service_lookup = self.metadata.service_name_to_id
-        template_lookup = self.metadata.log_template_to_id
+            valid_mask = (time_indices >= 0) & (time_indices < time_steps)
+            df_filtered = df_with_templates.filter(valid_mask)
+            time_indices_filtered = time_indices.filter(valid_mask)
 
-        for row in counts.iter_rows(named=True):
-            service_name = row["service_name"]
-            template = row["template"]
-            count = row["count"]
+            assert df_filtered.height > 0
 
-            service_id = service_lookup.get(service_name)
-            if service_id is not None:
-                template_id = template_lookup.get(template, 0)
-                assert 0 <= template_id < num_templates, (
-                    f"Template ID {template_id} out of bounds [0, {num_templates})"
-                )
-                result[service_id, template_id] += count
+            df_with_time_idx = df_filtered.with_columns(
+                pl.Series("time_idx", time_indices_filtered.to_list())
+            )
 
-        assert result.shape == (num_services, num_templates), (
-            f"Expected log result shape ({num_services}, {num_templates}), "
-            f"got {result.shape}"
-        )
+            counts = df_with_time_idx.group_by(
+                ["time_idx", "service_name", "template"]
+            ).agg(pl.count().alias("count"))
+
+            service_lookup = self.metadata.service_name_to_id
+            template_lookup = self.metadata.log_template_to_id
+
+            for row in counts.iter_rows(named=True):
+                time_idx = row["time_idx"]
+                service_name = row["service_name"]
+                template = row["template"]
+                count = row["count"]
+
+                service_id = service_lookup.get(service_name)
+                if service_id is not None:
+                    template_id = template_lookup.get(
+                        template, len(self.metadata.log_templates)
+                    )
+                    if 0 <= time_idx < time_steps and 0 <= template_id < num_templates:
+                        result[time_idx, service_id, template_id] += count
+
         return result
 
-    def _process_metrics_from_df(
-        self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
+    def _process_metrics(
+        self, datapack: Path, start_time: datetime, end_time: datetime, time_steps: int
     ) -> np.ndarray:
-        """Helper method to process metrics data from a pre-filtered DataFrame"""
-        interval = int(self.config.sample_interval)  # type: ignore
         num_services = len(self.metadata.services)
         num_metrics = len(self.metadata.metric_names)
 
-        # Calculate time buckets
-        window_duration = (end_time - start_time).total_seconds()
-        time_step_size = window_duration / interval if interval > 0 else 1.0
+        # (time_steps, services, metrics)
+        result = np.zeros((time_steps, num_services, num_metrics))
 
-        # Add time buckets and collect data
-        df_with_buckets = (
-            df.with_columns(
-                [
-                    ((pl.col("time") - start_time).dt.total_seconds() / time_step_size)
-                    .floor()
-                    .cast(pl.Int32)
-                    .alias("time_bucket")
-                ]
+        for metric_file in self.metric_files:
+            metric_path = datapack / metric_file
+            if not metric_path.exists():
+                logger.warning(f"Metric file {metric_path} does not exist")
+                continue
+
+            df = (
+                pl.scan_parquet(metric_path)
+                .filter((pl.col("time") >= start_time) & (pl.col("time") <= end_time))
+                .select(["time", "metric", "service_name", "value"])
+                .collect()
             )
-            .filter((pl.col("time_bucket") >= 0) & (pl.col("time_bucket") < interval))
-            .collect()
-        )
 
-        if df_with_buckets.height == 0:
-            result = np.zeros((num_services, interval, num_metrics))
-            assert result.shape == (num_services, interval, num_metrics), (
-                f"Expected metrics result shape ({num_services}, {interval}, {num_metrics}), "
-                f"got {result.shape}"
+            if df.height == 0:
+                continue
+
+            time_deltas = (df["time"] - start_time).dt.total_seconds()
+            time_indices = (time_deltas // 1).cast(pl.Int32)  # 1秒分辨率
+
+            valid_mask = (time_indices >= 0) & (time_indices < time_steps)
+            df_filtered = df.filter(valid_mask)
+            time_indices_filtered = time_indices.filter(valid_mask)
+
+            if df_filtered.height == 0:
+                continue
+
+            df_with_time_idx = df_filtered.with_columns(
+                pl.Series("time_idx", time_indices_filtered.to_list())
             )
-            return result
 
-        result = np.zeros((num_services, interval, num_metrics))
+            metrics_stats = df_with_time_idx.group_by(
+                ["time_idx", "service_name", "metric"]
+            ).agg(pl.col("value").mean().alias("mean_value"))
 
-        # Calculate statistics
-        metrics_stats = df_with_buckets.group_by(
-            ["service_name", "metric", "time_bucket"]
-        ).agg(pl.col("value").mean().alias("mean_value"))
+            service_lookup = self.metadata.service_name_to_id
+            metric_lookup = self.metadata.metric_name_to_id
 
-        service_lookup = self.metadata.service_name_to_id
-        metric_lookup = self.metadata.metric_name_to_id
+            for row in metrics_stats.iter_rows(named=True):
+                time_idx = row["time_idx"]
+                service_name = row["service_name"]
+                metric_name = row["metric"]
+                mean_value = row["mean_value"]
 
-        for row in metrics_stats.iter_rows(named=True):
-            service_name = row["service_name"]
-            metric_name = row["metric"]
-            time_bucket = row["time_bucket"]
-            mean_value = row["mean_value"]
+                service_id = service_lookup.get(service_name)
+                metric_id = metric_lookup.get(metric_name)
 
-            service_id = service_lookup.get(service_name)
-            metric_id = metric_lookup.get(metric_name)
-
-            if (
-                service_id is not None
-                and metric_id is not None
-                and 0 <= time_bucket < interval
-            ):
-                # Normalization processing
-                metric_meta = self.metadata.metrics[metric_id]
                 if (
-                    metric_meta.min_value is not None
-                    and metric_meta.max_value is not None
+                    service_id is not None
+                    and metric_id is not None
+                    and 0 <= time_idx < time_steps
+                    and mean_value is not None
                 ):
-                    value_range = metric_meta.max_value - metric_meta.min_value
-                    if value_range > 0:
-                        normalized_value = (
-                            mean_value - metric_meta.min_value
-                        ) / value_range
-                    else:
-                        normalized_value = 0.0
-                else:
-                    normalized_value = mean_value
+                    result[time_idx, service_id, metric_id] = mean_value
 
-                result[service_id, time_bucket, metric_id] = normalized_value
-
-        # Data smoothing
-        self._smooth_sparse_data(result, num_services, interval, num_metrics)
-
-        assert result.shape == (num_services, interval, num_metrics), (
-            f"Expected metrics result shape ({num_services}, {interval}, {num_metrics}), "
-            f"got {result.shape}"
-        )
+        self._smooth_sparse_data(result, num_services, time_steps, num_metrics)
         return result
 
-    def _process_traces_from_df(
-        self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
+    def _process_traces(
+        self, datapack: Path, start_time: datetime, end_time: datetime, time_steps: int
     ) -> np.ndarray:
-        """Helper method to process traces data from a pre-filtered DataFrame"""
-        interval = int(self.config.sample_interval)  # type: ignore
         num_services = len(self.metadata.services)
-        expected_features = 2  # latency and invocation count
+        trace_features = 2  #  span_count, avg_duration
 
-        # Calculate time buckets
-        window_duration = (end_time - start_time).total_seconds()
-        time_step_size = window_duration / interval if interval > 0 else 1.0
+        result = np.zeros((time_steps, num_services, trace_features))
 
-        # Add time buckets and collect data
-        df_with_buckets = (
-            df.with_columns(
+        for trace_file in self.trace_files:
+            trace_path = datapack / trace_file
+            if not trace_path.exists():
+                logger.warning(f"Trace file {trace_path} does not exist")
+                continue
+
+            df = (
+                pl.scan_parquet(trace_path)
+                .filter((pl.col("time") >= start_time) & (pl.col("time") <= end_time))
+                .select(["time", "service_name", "duration"])
+                .collect()
+            )
+
+            if df.height == 0:
+                continue
+
+            time_deltas = (df["time"] - start_time).dt.total_seconds()
+            time_indices = (time_deltas // 1).cast(pl.Int32)  # 1秒分辨率
+
+            valid_mask = (time_indices >= 0) & (time_indices < time_steps)
+            df_filtered = df.filter(valid_mask)
+            time_indices_filtered = time_indices.filter(valid_mask)
+
+            if df_filtered.height == 0:
+                continue
+
+            df_with_time_idx = df_filtered.with_columns(
+                pl.Series("time_idx", time_indices_filtered.to_list())
+            )
+
+            trace_stats = df_with_time_idx.group_by(["time_idx", "service_name"]).agg(
                 [
-                    ((pl.col("time") - start_time).dt.total_seconds() / time_step_size)
-                    .floor()
-                    .cast(pl.Int32)
-                    .alias("time_bucket")
+                    pl.count().alias("span_count"),
+                    pl.col("duration").mean().alias("avg_duration"),
                 ]
             )
-            .filter((pl.col("time_bucket") >= 0) & (pl.col("time_bucket") < interval))
-            .collect()
-        )
 
-        if df_with_buckets.height == 0:
-            result = np.zeros((num_services, interval, expected_features))
-            assert result.shape == (num_services, interval, expected_features), (
-                f"Expected traces result shape ({num_services}, {interval}, {expected_features}), "
-                f"got {result.shape}"
-            )
-            return result
+            service_lookup = self.metadata.service_name_to_id
 
-        result = np.zeros((num_services, interval, expected_features))
+            for row in trace_stats.iter_rows(named=True):
+                time_idx = row["time_idx"]
+                service_name = row["service_name"]
+                span_count = row["span_count"]
+                avg_duration = row["avg_duration"]
 
-        # Calculate latency and invocation statistics
-        trace_stats = df_with_buckets.group_by(["service_name", "time_bucket"]).agg(
-            [
-                pl.col("duration").mean().alias("avg_latency"),
-                pl.col("duration").count().alias("invocation_count"),
-            ]
-        )
+                service_id = service_lookup.get(service_name)
+                if service_id is not None and 0 <= time_idx < time_steps:
+                    result[time_idx, service_id, 0] = span_count
+                    if avg_duration is not None:
+                        result[time_idx, service_id, 1] = avg_duration
 
-        service_lookup = self.metadata.service_name_to_id
-
-        for row in trace_stats.iter_rows(named=True):
-            service_name = row["service_name"]
-            time_bucket = row["time_bucket"]
-            avg_latency = row["avg_latency"]
-            invocation_count = row["invocation_count"]
-
-            service_id = service_lookup.get(service_name)
-            if service_id is not None and 0 <= time_bucket < interval:
-                result[service_id, time_bucket, 0] = (
-                    avg_latency if avg_latency is not None else 0.0
-                )
-                result[service_id, time_bucket, 1] = (
-                    invocation_count if invocation_count is not None else 0.0
-                )
-
-        # Data smoothing
-        self._smooth_sparse_data(result, num_services, interval, expected_features)
-
-        # Z-score normalization
-        latency_values = result[:, :, 0].flatten()
-        if np.std(latency_values) > 1e-8:
-            mean_latency = np.mean(latency_values)
-            std_latency = np.std(latency_values)
-            result[:, :, 0] = (result[:, :, 0] - mean_latency) / std_latency
-
-        assert result.shape == (num_services, interval, expected_features), (
-            f"Expected traces result shape ({num_services}, {interval}, {expected_features}), "
-            f"got {result.shape}"
-        )
+        self._smooth_sparse_data(result, num_services, time_steps, trace_features)
         return result

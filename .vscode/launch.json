@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "create_dataset.py",
             "console": "integratedTerminal",
-            "args": "--max-cases 5 --dataset rcabench"
+            // "args": "--max-cases 5 --dataset rcabench"
         },
         {
             "name": "train",

@@ -1,6 +1,5 @@
-import pickle
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple
 import torch
 import dgl
 import typer
@@ -13,28 +12,24 @@ from src.eadro.utils import (
 )
 from src.eadro.base import BaseModel
 from src.eadro.config import Config
-from src.preprocessing.base import DataSample, DatasetMetadata
-from typing import Counter
+from src.preprocessing.base import (
+    DataSample,
+    DatasetMetadata,
+    TimeSeriesDatapack,
+)
 
 
-class ChunkDataset(Dataset):
+class WindowDataset(Dataset):
+    """Dataset for pre-computed window data samples"""
+
     def __init__(
         self,
-        samples: List[DataSample],
+        window_data: List[Tuple[DataSample, int]],
         metadata: DatasetMetadata,
-        shuffle: bool = False,
     ):
         self.metadata = metadata
         self.node_num = len(metadata.services)
 
-        # Shuffle samples at initialization if requested
-        if shuffle:
-            samples = samples.copy()
-            random.shuffle(samples)
-
-        self.samples = samples
-
-        # Pre-build edges once
         edges_src = []
         edges_dst = []
         for edge in metadata.service_calling_edges:
@@ -43,40 +38,32 @@ class ChunkDataset(Dataset):
 
         self.edges = (edges_src, edges_dst) if edges_src else ([], [])
 
-        # Pre-load all graphs to improve training speed
-        logger.info(f"Pre-loading {len(samples)} graphs...")
         self.graphs = []
         self.labels = []
 
-        for sample in self.samples:
-            # Create DGL graph
-            assert len(self.edges) > 0, "Edges must be defined for the graph"
-            graph = dgl.graph(self.edges, num_nodes=self.node_num)
-
-            # Add node features
-            graph.ndata["logs"] = torch.FloatTensor(sample.log)
-            graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
-            graph.ndata["traces"] = torch.FloatTensor(sample.trace)
-
-            # Convert ground truth service to label
-            label = sample.get_gt_service_id(self.metadata.service_name_to_id)
-
+        logger.info("Pre-creating graphs...")
+        for data_sample, label in window_data:
+            graph = self._create_graph(data_sample)
             self.graphs.append(graph)
             self.labels.append(label)
 
-        # count the labels distribution
-        label_counter = Counter(self.labels)
-        logger.info("Label distribution:")
-        for label, count in label_counter.items():
-            logger.info(f"Service {label}: {count} samples")
-
-        logger.info(f"Successfully pre-loaded {len(self.graphs)} graphs")
+        logger.info(
+            f"Created WindowDataset with {len(self.graphs)} pre-computed graphs"
+        )
 
     def __len__(self) -> int:
         return len(self.graphs)
 
     def __getitem__(self, idx: int) -> Tuple[dgl.DGLGraph, int]:
         return self.graphs[idx], self.labels[idx]
+
+    def _create_graph(self, sample: DataSample) -> dgl.DGLGraph:
+        assert len(self.edges) > 0, "Edges must be defined for the graph"
+        graph = dgl.graph(self.edges, num_nodes=self.node_num)
+        graph.ndata["logs"] = torch.FloatTensor(sample.log)
+        graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
+        graph.ndata["traces"] = torch.FloatTensor(sample.trace)
+        return graph
 
 
 def get_device(use_gpu: bool) -> torch.device:
@@ -95,148 +82,88 @@ def collate_fn(
     return batched_graph, torch.tensor(labels)
 
 
-def setup_logging(log_file: Optional[str] = None) -> None:
-    """Setup loguru logger with optional file output"""
-    # Remove default handler first
-    logger.remove()
-
-    # Add console handler
-    logger.add(
-        lambda msg: print(msg, end=""),
-        format="{time:YYYY-MM-DD HH:mm:ss} P{process} {level} {message}",
-        level="INFO",
-    )
-
-    # Add file handler if specified
-    if log_file:
-        logger.add(
-            log_file,
-            format="{time:YYYY-MM-DD HH:mm:ss} P{process} {level} {message}",
-            level="INFO",
-        )
-
-
-def load_data(
+def load_timeseries_data(
     config: Config,
-) -> Tuple[List[DataSample], List[DataSample], DatasetMetadata]:
-    """Load processed dataset samples and metadata"""
+) -> Tuple[List[Tuple[DataSample, int]], List[Tuple[DataSample, int]], DatasetMetadata]:
     dataset_name = config.get("dataset")
 
-    # Load samples
-    samples_path = Path(f".cache/{dataset_name}_samples.pkl")
-    if not samples_path.exists():
-        raise FileNotFoundError(f"Samples file not found: {samples_path}")
+    datapack_path = Path(f".cache/{dataset_name}_timeseries_datapack.pkl")
+    assert datapack_path.exists()
 
-    with open(samples_path, "rb") as f:
-        all_samples = pickle.load(f)
+    datapack = TimeSeriesDatapack.load(str(datapack_path))
+    assert datapack is not None, "Time series datapack is None"
+    assert datapack.metadata is not None, "Time series datapack metadata is None"
 
-    # Load metadata
-    metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+    window_size = config.get("datasets")[config.get("dataset")]["sample_interval"]
+    step_size = config.get("datasets")[config.get("dataset")]["sample_step"]
 
-    metadata = DatasetMetadata.from_pkl(str(metadata_path))
-    if metadata is None:
-        raise ValueError(f"Failed to load metadata from {metadata_path}")
+    label_to_windows = defaultdict(list)
 
-    # Group samples by label (stratified sampling)
-    label_to_samples = defaultdict(list)
-    for sample in all_samples:
-        label = sample.get_gt_service_id(metadata.service_name_to_id)
-        label_to_samples[label].append(sample)
+    for ts_sample in datapack.samples:
+        total_time = (ts_sample.end_time - ts_sample.start_time).total_seconds()
+        abnormal_time = 0
+        main_gt_service = ""
 
-    # Log label distribution before balancing
-    logger.info("Original label distribution:")
-    for label, samples in label_to_samples.items():
-        logger.info(f"Service {label}: {len(samples)} samples")
+        assert (
+            len(ts_sample.abnormal_periods) == 1 or len(ts_sample.abnormal_periods) == 0
+        )
+        for start, end, gt_service, fault_type in ts_sample.abnormal_periods:
+            abnormal_duration = (end - start).total_seconds()
+            abnormal_time += abnormal_duration
+            if abnormal_duration > 0:
+                if not main_gt_service:
+                    main_gt_service = gt_service
 
-    # Balance the dataset by downsampling label -1 to match other classes
-    if -1 in label_to_samples:
-        # Find the minimum count among non-(-1) labels
-        non_negative_counts = [
-            len(samples) for label, samples in label_to_samples.items() if label != -1
-        ]
-        if non_negative_counts:
-            min_count = min(non_negative_counts)
+        abnormal_ratio = abnormal_time / total_time if total_time > 0 else 0
+        if abnormal_ratio > 0.1:
+            service_id = datapack.metadata.service_name_to_id.get(main_gt_service, -1)
+        else:
+            service_id = -1
 
-            # Downsample label -1 to match the minimum count
-            negative_samples = label_to_samples[-1].copy()
-            random.shuffle(negative_samples)
-            label_to_samples[-1] = negative_samples[:min_count]
+        # Generate windows for this time series sample
+        time_steps = ts_sample.get_time_steps()
+        max_start = time_steps - window_size
 
-            logger.info(
-                f"Downsampled label -1 from {len(negative_samples)} to {min_count} samples"
-            )
+        assert max_start >= 0
+        for start_idx in range(0, max_start + 1, step_size):
+            window_data = ts_sample.get_time_window(start_idx, window_size)
+            label_to_windows[service_id].append((window_data, service_id))
 
-    # Log balanced distribution
-    logger.info("Balanced label distribution:")
-    for label, samples in label_to_samples.items():
-        logger.info(f"Service {label}: {len(samples)} samples")
+    for label, windows in label_to_windows.items():
+        logger.info(f"Service {label}: {len(windows)} windows")
 
-    # Split each label's samples into train and test
     train_ratio = config.get("training.train_ratio")
-    train_samples = []
-    test_samples = []
+    train_windows = []
+    test_windows = []
 
-    for label, samples in label_to_samples.items():
-        # Shuffle samples for this label
-        label_samples = samples.copy()
-        random.shuffle(label_samples)
+    for label, windows in label_to_windows.items():
+        label_windows = windows.copy()
+        split_idx = int(len(label_windows) * train_ratio)
+        train_windows.extend(label_windows[:split_idx])
+        test_windows.extend(label_windows[split_idx:])
 
-        # Split this label's samples
-        split_idx = int(len(label_samples) * train_ratio)
-        train_samples.extend(label_samples[:split_idx])
-        test_samples.extend(label_samples[split_idx:])
-
-    # Shuffle final train and test sets
-    random.shuffle(train_samples)
-    random.shuffle(test_samples)
-
-    logger.info(
-        f"Loaded {len(train_samples)} training samples and {len(test_samples)} test samples"
-    )
-
-    # Log final distribution for verification
-    train_label_counts = defaultdict(int)
-    test_label_counts = defaultdict(int)
-
-    for sample in train_samples:
-        label = sample.get_gt_service_id(metadata.service_name_to_id)
-        train_label_counts[label] += 1
-
-    for sample in test_samples:
-        label = sample.get_gt_service_id(metadata.service_name_to_id)
-        test_label_counts[label] += 1
-
-    logger.info("Training set label distribution:")
-    for label, count in train_label_counts.items():
-        logger.info(f"Service {label}: {count} samples")
-
-    logger.info("Test set label distribution:")
-    for label, count in test_label_counts.items():
-        logger.info(f"Service {label}: {count} samples")
-
-    logger.info(f"Number of services: {len(metadata.services)}")
-    logger.info(f"Number of log templates: {len(metadata.log_templates)}")
-    logger.info(f"Number of metrics: {len(metadata.metrics)}")
-    logger.info(
-        f"Number of service calling edges: {len(metadata.service_calling_edges)}"
-    )
-
-    return train_samples, test_samples, metadata
+    logger.info(f"Total training windows: {len(train_windows)}")
+    logger.info(f"Total testing windows: {len(test_windows)}")
+    return train_windows, test_windows, datapack.metadata
 
 
-def create_data_loaders(
-    train_samples: List[DataSample],
-    test_samples: List[DataSample],
+def create_timeseries_data_loaders(
+    train_windows: List[Tuple[DataSample, int]],
+    test_windows: List[Tuple[DataSample, int]],
     metadata: DatasetMetadata,
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
-    # Create datasets with shuffling for training data
-    train_dataset = ChunkDataset(train_samples, metadata, shuffle=True)
-    test_dataset = ChunkDataset(test_samples, metadata, shuffle=False)
-
     batch_size = config.get("training.batch_size")
+
+    train_dataset = WindowDataset(
+        window_data=train_windows,
+        metadata=metadata,
+    )
+
+    test_dataset = WindowDataset(
+        window_data=test_windows,
+        metadata=metadata,
+    )
 
     train_loader = DataLoader(
         train_dataset,
@@ -296,15 +223,15 @@ def main(
 
         evaluation_epoch = config.get("training.evaluation_epoch")
 
-        train_samples, test_samples, metadata = load_data(config)
+        train_windows, test_windows, metadata = load_timeseries_data(config)
+        train_loader, test_loader = create_timeseries_data_loaders(
+            train_windows, test_windows, metadata, config
+        )
 
         config.set("node_num", len(metadata.services))
         config.set("event_num", len(metadata.log_templates) + 1)
         config.set("metric_num", len(metadata.metrics))
 
-        train_loader, test_loader = create_data_loaders(
-            train_samples, test_samples, metadata, config
-        )
         model = BaseModel(
             event_num=config.get("event_num"),
             metric_num=config.get("metric_num"),

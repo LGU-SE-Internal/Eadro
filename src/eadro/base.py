@@ -113,7 +113,6 @@ class BaseModel(nn.Module):
         hrs, ndcgs = np.zeros(5), np.zeros(5)
         TP, FP, FN = 0, 0, 0  # True Positive, False Positive, False Negative
         batch_cnt, epoch_loss = 0, 0.0
-        total_case = 0
 
         with torch.no_grad():
             for graph, ground_truths in test_loader:
