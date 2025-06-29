@@ -1,4 +1,4 @@
-dataset = "rcabench"
+dataset = "sn"
 
 [datasets.sn]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
@@ -18,7 +18,7 @@ metric_files = ["metric.parquet"]
 trace_files = ["trace.parquet"]
 label_files = ["fault_info.json"]
 sample_interval = 10                                              # seconds. Means every sample is 10 seconds apart
-sample_step = 1
+sample_step = 3
 
 
 [datasets.rcabench]
@@ -38,10 +38,10 @@ sample_step = 1
 
 # Training configuration
 [training]
-random_seed = 114514
+random_seed = 42
 gpu = true
-epochs = 200
-batch_size = 16
+epochs = 1000
+batch_size = 2048
 lr = 0.001
 patience = 10
 train_ratio = 0.9
@@ -50,8 +50,8 @@ evaluation_epoch = 5
 # Learning rate scheduler configuration
 [training.lr_scheduler]
 type = "step"     # none, step, exponential, cosine, plateau
-step_size = 10
-gamma = 0.99
+step_size = 20
+gamma = 0.9
 warmup_epochs = 0
 min_lr = 1e-6
 
@@ -64,7 +64,7 @@ log_dim = 16      # Log embedding dimension
 attn_head = 4     # Number of attention heads
 activation = 0.2  # LeakyReLU negative slope
 debug = false     # Debug mode
-chunk_length = 60
+chunk_length = 10
 
 # BaseModel specific parameters
 [model.base]

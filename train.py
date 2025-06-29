@@ -83,6 +83,51 @@ class TimeWindowDataset(Dataset):
         return graph
 
 
+class WindowDataset(Dataset):
+    """Dataset for pre-computed window data samples"""
+
+    def __init__(
+        self,
+        window_data: List[Tuple[DataSample, int]],
+        metadata: DatasetMetadata,
+        shuffle: bool = False,
+    ):
+        self.window_data = window_data
+        self.metadata = metadata
+        self.node_num = len(metadata.services)
+
+        edges_src = []
+        edges_dst = []
+        for edge in metadata.service_calling_edges:
+            edges_src.append(edge[0])
+            edges_dst.append(edge[1])
+
+        self.edges = (edges_src, edges_dst) if edges_src else ([], [])
+
+        if shuffle:
+            random.shuffle(self.window_data)
+
+        logger.info(
+            f"Created WindowDataset with {len(self.window_data)} pre-computed windows"
+        )
+
+    def __len__(self) -> int:
+        return len(self.window_data)
+
+    def __getitem__(self, idx: int) -> Tuple[dgl.DGLGraph, int]:
+        data_sample, label = self.window_data[idx]
+        graph = self._create_graph(data_sample)
+        return graph, label
+
+    def _create_graph(self, sample: DataSample) -> dgl.DGLGraph:
+        assert len(self.edges) > 0, "Edges must be defined for the graph"
+        graph = dgl.graph(self.edges, num_nodes=self.node_num)
+        graph.ndata["logs"] = torch.FloatTensor(sample.log)
+        graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
+        graph.ndata["traces"] = torch.FloatTensor(sample.trace)
+        return graph
+
+
 def get_device(use_gpu: bool) -> torch.device:
     if use_gpu and torch.cuda.is_available():
         logger.info("Using GPU...")
@@ -101,7 +146,7 @@ def collate_fn(
 
 def load_timeseries_data(
     config: Config,
-) -> Tuple[List[TimeSeriesDataSample], List[TimeSeriesDataSample], DatasetMetadata]:
+) -> Tuple[List[Tuple[DataSample, int]], List[Tuple[DataSample, int]], DatasetMetadata]:
     dataset_name = config.get("dataset")
 
     datapack_path = Path(f".cache/{dataset_name}_timeseries_datapack.pkl")
@@ -115,7 +160,12 @@ def load_timeseries_data(
     if datapack.metadata is None:
         raise ValueError("Time series datapack metadata is None")
 
-    label_to_samples = defaultdict(list)
+    # Get window parameters
+    window_size = config.get("datasets")[config.get("dataset")]["sample_interval"]
+    step_size = config.get("datasets")[config.get("dataset")]["sample_step"]
+
+    # First, generate all windows with their labels
+    label_to_windows = defaultdict(list)
 
     for ts_sample in datapack.samples:
         total_time = (ts_sample.end_time - ts_sample.start_time).total_seconds()
@@ -135,68 +185,71 @@ def load_timeseries_data(
         else:
             service_id = -1
 
-        label_to_samples[service_id].append(ts_sample)
+        # Generate windows for this time series sample
+        time_steps = ts_sample.get_time_steps()
+        max_start = time_steps - window_size
 
-    for label, samples in label_to_samples.items():
-        logger.info(f"Service {label}: {len(samples)} time series samples")
+        if max_start >= 0:
+            for start_idx in range(0, max_start + 1, step_size):
+                window_data = ts_sample.get_time_window(start_idx, window_size)
+                label_to_windows[service_id].append((window_data, service_id))
 
-    if -1 in label_to_samples:
+    for label, windows in label_to_windows.items():
+        logger.info(f"Service {label}: {len(windows)} windows")
+
+    # Balance the dataset by downsampling normal samples
+    if -1 in label_to_windows:
         non_negative_counts = [
-            len(samples) for label, samples in label_to_samples.items() if label != -1
+            len(windows) for label, windows in label_to_windows.items() if label != -1
         ]
         if non_negative_counts:
             min_count = min(non_negative_counts)
-            negative_samples = label_to_samples[-1].copy()
-            random.shuffle(negative_samples)
-            label_to_samples[-1] = negative_samples[:min_count]
+            negative_windows = label_to_windows[-1].copy()
+            random.shuffle(negative_windows)
+            label_to_windows[-1] = negative_windows[:min_count]
             logger.info(
-                f"Downsampled normal samples from {len(negative_samples)} to {min_count}"
+                f"Downsampled normal windows from {len(negative_windows)} to {min_count}"
             )
 
+    # Now split windows by label into train/test sets
     train_ratio = config.get("training.train_ratio")
-    train_samples = []
-    test_samples = []
+    train_windows = []
+    test_windows = []
 
-    for label, samples in label_to_samples.items():
-        label_samples = samples.copy()
-        random.shuffle(label_samples)
-        split_idx = int(len(label_samples) * train_ratio)
-        train_samples.extend(label_samples[:split_idx])
-        test_samples.extend(label_samples[split_idx:])
+    for label, windows in label_to_windows.items():
+        label_windows = windows.copy()
+        random.shuffle(label_windows)
+        split_idx = int(len(label_windows) * train_ratio)
+        train_windows.extend(label_windows[:split_idx])
+        test_windows.extend(label_windows[split_idx:])
 
-    random.shuffle(train_samples)
-    random.shuffle(test_samples)
+    random.shuffle(train_windows)
+    random.shuffle(test_windows)
 
     logger.info(
-        f"Loaded {len(train_samples)} training time series and {len(test_samples)} test time series"
+        f"Loaded {len(train_windows)} training windows and {len(test_windows)} test windows"
     )
 
-    return train_samples, test_samples, datapack.metadata
+    return train_windows, test_windows, datapack.metadata
 
 
 def create_timeseries_data_loaders(
-    train_samples: List[TimeSeriesDataSample],
-    test_samples: List[TimeSeriesDataSample],
+    train_windows: List[Tuple[DataSample, int]],
+    test_windows: List[Tuple[DataSample, int]],
     metadata: DatasetMetadata,
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
     batch_size = config.get("training.batch_size")
-    window_size = config.get("datasets")[config.get("dataset")]["sample_interval"]
-    step_size = config.get("datasets")[config.get("dataset")]["sample_step"]
 
-    train_dataset = TimeWindowDataset(
-        time_series_samples=train_samples,
+    train_dataset = WindowDataset(
+        window_data=train_windows,
         metadata=metadata,
-        window_size=window_size,
-        step_size=step_size,
         shuffle=True,
     )
 
-    test_dataset = TimeWindowDataset(
-        time_series_samples=test_samples,
+    test_dataset = WindowDataset(
+        window_data=test_windows,
         metadata=metadata,
-        window_size=window_size,
-        step_size=step_size,
         shuffle=False,
     )
 
@@ -258,9 +311,9 @@ def main(
 
         evaluation_epoch = config.get("training.evaluation_epoch")
 
-        train_samples, test_samples, metadata = load_timeseries_data(config)
+        train_windows, test_windows, metadata = load_timeseries_data(config)
         train_loader, test_loader = create_timeseries_data_loaders(
-            train_samples, test_samples, metadata, config
+            train_windows, test_windows, metadata, config
         )
 
         config.set("node_num", len(metadata.services))
