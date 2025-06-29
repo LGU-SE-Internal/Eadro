@@ -18,7 +18,7 @@ from src.eadro.handlers import (
     create_eadro_model,
     OptimizerAdapter,
 )
-from src.eadro.base import BaseModel
+from src.eadro.model import MainModel
 from src.eadro.utils import seed_everything
 import torch
 
@@ -99,7 +99,7 @@ def train(
 
         # Create experiment manager
         experiment_manager = UniversalExperimentManager[
-            BaseModel, tuple, OptimizerAdapter
+            MainModel, tuple, OptimizerAdapter
         ](
             config=config,
             experiment_name=experiment_name,

@@ -423,6 +423,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             "timestamp": datetime.now().isoformat(),
             "metrics": metrics.copy(),
         }
+        logger.info(f"Epoch {epoch} - {phase} metrics: {json.dumps(metrics, indent=2)}")
 
         self.metadata["metrics_history"].append(entry)
 
