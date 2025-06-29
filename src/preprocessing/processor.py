@@ -17,15 +17,14 @@ import json
 from datetime import datetime, timedelta
 import numpy as np
 import pickle
-from .utils import timeit
 import gc
 from functools import lru_cache
 from loguru import logger
-from concurrent.futures import ThreadPoolExecutor
-import threading
 import pytz
 from rcabench.openapi import InjectionApi, ApiClient, Configuration
 import random
+import hashlib
+import time
 
 
 class Processor(DataProcessor):
@@ -39,7 +38,6 @@ class Processor(DataProcessor):
         self.drain = DrainProcessor(conf="drain.ini", save_path="cache/drain/temp")
 
         self._file_cache = {}
-        self._lock = threading.Lock()  # Add thread safety for shared resources
 
         self.datapack_dir = self.config.root_path  # type: ignore
         assert isinstance(self.datapack_dir, str)
@@ -59,6 +57,43 @@ class Processor(DataProcessor):
         gc.collect()
         if len(self._file_cache) > 100:
             self._file_cache.clear()
+
+    def _cache_processed_data(self, datapack: Path, cache_key: str, data) -> None:
+        """Cache processed data to avoid recomputation"""
+        cache_dir = Path(".cache/processor")
+        cache_dir.mkdir(exist_ok=True)
+        cache_file = cache_dir / f"{datapack.name}_{cache_key}.pkl"
+
+        try:
+            with open(cache_file, "wb") as f:
+                pickle.dump(data, f)
+        except Exception as e:
+            logger.warning(f"Failed to cache data: {e}")
+
+    def _generate_cache_key(
+        self,
+        datapack: Path,
+        start: datetime,
+        end: datetime,
+        interval: int,
+        sample_step: int,
+    ) -> str:
+        """Generate a stable cache key based on input parameters"""
+        key_data = f"{datapack.name}_{start.isoformat()}_{end.isoformat()}_{interval}_{sample_step}"
+        return hashlib.md5(key_data.encode()).hexdigest()
+
+    def _load_cached_data(self, datapack: Path, cache_key: str):
+        """Load cached processed data if available"""
+        cache_dir = Path(".cache/processor")
+        cache_file = cache_dir / f"{datapack.name}_{cache_key}.pkl"
+
+        if cache_file.exists():
+            try:
+                with open(cache_file, "rb") as f:
+                    return pickle.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load cached data: {e}")
+        return None
 
     def _load_config(self, config_path: str) -> Dynaconf:
         assert config_path != "", "Config path cannot be empty."
@@ -133,7 +168,7 @@ class Processor(DataProcessor):
     def process_dataset(self):
         """
         1. create metadata: create_metadata
-        2. process each datapack: process_datapack (with parallel processing)
+        2. process each datapack: process_datapack (serial processing)
            2.1 process log
            2.2 process metrics
            2.3 process traces
@@ -146,23 +181,14 @@ class Processor(DataProcessor):
 
         samples: list[DataSample] = []
 
-        # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            # Submit all datapack processing tasks
-            future_to_datapack = {
-                executor.submit(self.process_datapack, datapack): datapack
-                for datapack in self.datapacks
-            }
-
-            # Collect results with progress bar
-            for future in tqdm(future_to_datapack, desc="Processing datapacks"):
-                try:
-                    datapack_samples = future.result()
-                    samples.extend(datapack_samples)
-                except Exception as e:
-                    datapack = future_to_datapack[future]
-                    logger.error(f"Error processing datapack {datapack}: {e}")
-                    raise
+        # Serial processing of datapacks
+        for datapack in tqdm(self.datapacks, desc="Processing datapacks"):
+            try:
+                datapack_samples = self.process_datapack(datapack)
+                samples.extend(datapack_samples)
+            except Exception as e:
+                logger.error(f"Error processing datapack {datapack}: {e}")
+                raise
 
         with open(f".cache/{self.dataset}_samples.pkl", "wb") as f:
             pickle.dump(samples, f)
@@ -188,6 +214,8 @@ class Processor(DataProcessor):
             metadata = DatasetMetadata(
                 dataset_name=self.dataset,
             )
+        else:
+            return metadata
 
         all_metrics = set()
         all_services = set()
@@ -505,96 +533,434 @@ class Processor(DataProcessor):
         )
         assert isinstance(interval, int), "Sample interval should be an integer."
 
-        log_dfs = {}
-        metric_dfs = {}
-        trace_dfs = {}
-
-        time_range = []
+        time_ranges = []
         if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
             1970, 1, 1, 0, 0, 0
         ):
-            time_range.append((normal_st, normal_et, "", ""))
+            time_ranges.append((normal_st, normal_et, "", ""))
         if abnormal_st != datetime(1970, 1, 1, 0, 0, 0) and abnormal_et != datetime(
             1970, 1, 1, 0, 0, 0
         ):
-            time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
+            time_ranges.append((abnormal_st, abnormal_et, fault_type, gt_service))
 
-        for start, end, fault_type, gt_service in time_range:
-            for log_file in self.log_files:
-                log_dfs[log_file] = pl.scan_parquet(datapack / log_file).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
+        for start, end, fault_type, gt_service in time_ranges:
+            start_time = time.time()
+
+            # Pre-compute all window boundaries for this time range
+            windows = self._compute_time_windows(start, end, interval, sample_step)
+            if not windows:
+                continue
+
+            # Check cache first
+            cache_key = self._generate_cache_key(
+                datapack, start, end, interval, sample_step
+            )
+            cached_samples = self._load_cached_data(datapack, cache_key)
+            if cached_samples is not None:
+                samples.extend(cached_samples)
+                elapsed = time.time() - start_time
+                logger.info(
+                    f"Loaded {len(cached_samples)} samples from cache for {datapack.name} ({start} to {end}) in {elapsed:.2f}s"
                 )
+                continue
 
-            for metric_file in self.metric_files:
-                metric_dfs[metric_file] = pl.scan_parquet(
-                    datapack / metric_file
-                ).filter((pl.col("time") >= start) & (pl.col("time") <= end))
+            # Batch process all data types for this time range
+            batch_samples = self._process_datapack_batch(
+                datapack, windows, fault_type, gt_service, interval
+            )
+            samples.extend(batch_samples)
 
-            for trace_file in self.trace_files:
-                trace_dfs[trace_file] = pl.scan_parquet(datapack / trace_file).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
+            # Cache the processed samples
+            self._cache_processed_data(datapack, cache_key, batch_samples)
 
-            current_time = start
-            while current_time < end:
-                window_end_time = current_time + timedelta(seconds=interval)
-                if window_end_time > end:
-                    break
+            # Clean up memory after processing each time range
+            self._optimize_memory_usage()
 
-                sample = DataSample(
-                    abnormal=gt_service != "",
-                    gt_service=gt_service,
-                    fault_type=fault_type,
-                )
-
-                # Process log data
-                for log_file in self.log_files:
-                    window_df = log_dfs[log_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.log = self._process_log_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.log.shape == (
-                        len(self.metadata.services),
-                        len(self.metadata.log_templates) + 1,
-                    )
-
-                # Process metrics data
-                for metric_file in self.metric_files:
-                    window_df = metric_dfs[metric_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.metric = self._process_metrics_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.metric.shape == (
-                        len(self.metadata.services),
-                        interval,
-                        len(self.metadata.metric_names),
-                    )
-
-                # Process trace data
-                for trace_file in self.trace_files:
-                    window_df = trace_dfs[trace_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.trace = self._process_traces_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.trace.shape == (
-                        len(self.metadata.services),
-                        interval,
-                        2,
-                    )
-
-                samples.append(sample)
-                current_time += timedelta(seconds=sample_step)
+            elapsed = time.time() - start_time
+            logger.info(
+                f"Processed {len(batch_samples)} samples for {datapack.name} ({start} to {end}) in {elapsed:.2f}s"
+            )
 
         return samples
+
+    def _compute_time_windows(
+        self, start: datetime, end: datetime, interval: int, sample_step: int
+    ) -> list[tuple[datetime, datetime]]:
+        """Pre-compute all time windows for efficient batch processing"""
+        windows = []
+        current_time = start
+
+        while current_time < end:
+            window_end_time = current_time + timedelta(seconds=interval)
+            if window_end_time > end:
+                break
+            windows.append((current_time, window_end_time))
+            current_time += timedelta(seconds=sample_step)
+
+        return windows
+
+    def _process_datapack_batch(
+        self,
+        datapack: Path,
+        windows: list[tuple[datetime, datetime]],
+        fault_type: str,
+        gt_service: str,
+        interval: int,
+    ) -> list[DataSample]:
+        """Batch process all windows for a time range to minimize redundant operations"""
+        if not windows:
+            return []
+
+        # Get overall time range for efficient data loading
+        overall_start = min(w[0] for w in windows)
+        overall_end = max(w[1] for w in windows)
+
+        samples = []
+
+        # Process each data type in batch
+        log_results = self._batch_process_logs(
+            datapack, windows, overall_start, overall_end
+        )
+        metric_results = self._batch_process_metrics(
+            datapack, windows, overall_start, overall_end, interval
+        )
+        trace_results = self._batch_process_traces(
+            datapack, windows, overall_start, overall_end, interval
+        )
+
+        # Create samples from batch results
+        for i, (window_start, window_end) in enumerate(windows):
+            sample = DataSample(
+                abnormal=gt_service != "",
+                gt_service=gt_service,
+                fault_type=fault_type,
+            )
+
+            sample.log = log_results[i]
+            sample.metric = metric_results[i]
+            sample.trace = trace_results[i]
+
+            samples.append(sample)
+
+        return samples
+
+    def _batch_process_logs(
+        self,
+        datapack: Path,
+        windows: list[tuple[datetime, datetime]],
+        overall_start: datetime,
+        overall_end: datetime,
+    ) -> list[np.ndarray]:
+        """Batch process log data for all windows to minimize redundant operations"""
+        num_services = len(self.metadata.services)
+        num_templates = len(self.metadata.log_templates) + 1
+
+        # Load all log data for the overall time range once
+        all_log_data = []
+        for log_file in self.log_files:
+            df = (
+                pl.scan_parquet(datapack / log_file)
+                .filter(
+                    (pl.col("time") >= overall_start) & (pl.col("time") <= overall_end)
+                )
+                .select(["time", "message", "service_name"])
+                .collect()
+            )
+
+            if df.height > 0:
+                all_log_data.append(df)
+
+        if not all_log_data:
+            return [np.zeros((num_services, num_templates)) for _ in windows]
+
+        # Combine all log data
+        combined_df = (
+            pl.concat(all_log_data) if len(all_log_data) > 1 else all_log_data[0]
+        )
+
+        # Batch process templates for all messages at once
+        messages = combined_df["message"].to_list()
+        templates = self.drain.process_batch(messages)
+
+        # Add template column
+        df_with_templates = combined_df.with_columns(pl.Series("template", templates))
+
+        results = []
+        service_lookup = self.metadata.service_name_to_id
+        template_lookup = self.metadata.log_template_to_id
+
+        # Process each window
+        for window_start, window_end in windows:
+            result = np.zeros((num_services, num_templates))
+
+            # Filter data for current window
+            window_data = df_with_templates.filter(
+                (pl.col("time") >= window_start) & (pl.col("time") <= window_end)
+            )
+
+            if window_data.height > 0:
+                # Calculate counts for this window
+                counts = window_data.group_by(["service_name", "template"]).agg(
+                    pl.count().alias("count")
+                )
+
+                for row in counts.iter_rows(named=True):
+                    service_name = row["service_name"]
+                    template = row["template"]
+                    count = row["count"]
+
+                    service_id = service_lookup.get(service_name)
+                    if service_id is not None:
+                        template_id = template_lookup.get(template, 0)
+                        if 0 <= template_id < num_templates:
+                            result[service_id, template_id] += count
+
+            results.append(result)
+
+        return results
+
+    def _batch_process_metrics(
+        self,
+        datapack: Path,
+        windows: list[tuple[datetime, datetime]],
+        overall_start: datetime,
+        overall_end: datetime,
+        interval: int,
+    ) -> list[np.ndarray]:
+        """Batch process metrics data for all windows"""
+        num_services = len(self.metadata.services)
+        num_metrics = len(self.metadata.metric_names)
+
+        # Load all metric data for the overall time range once
+        all_metric_data = []
+        for metric_file in self.metric_files:
+            df = (
+                pl.scan_parquet(datapack / metric_file)
+                .filter(
+                    (pl.col("time") >= overall_start) & (pl.col("time") <= overall_end)
+                )
+                .select(["time", "metric", "service_name", "value"])
+                .collect()
+            )
+
+            if df.height > 0:
+                all_metric_data.append(df)
+
+        if not all_metric_data:
+            return [np.zeros((num_services, interval, num_metrics)) for _ in windows]
+
+        # Combine all metric data
+        combined_df = (
+            pl.concat(all_metric_data)
+            if len(all_metric_data) > 1
+            else all_metric_data[0]
+        )
+
+        results = []
+        service_lookup = self.metadata.service_name_to_id
+        metric_lookup = self.metadata.metric_name_to_id
+
+        # Process each window
+        for window_start, window_end in windows:
+            result = np.zeros((num_services, interval, num_metrics))
+
+            # Filter data for current window
+            window_data = combined_df.filter(
+                (pl.col("time") >= window_start) & (pl.col("time") <= window_end)
+            )
+
+            if window_data.height > 0:
+                # Calculate time buckets
+                window_duration = (window_end - window_start).total_seconds()
+                time_step_size = window_duration / interval if interval > 0 else 1.0
+
+                # Add time buckets
+                df_with_buckets = window_data.with_columns(
+                    [
+                        (
+                            (pl.col("time") - window_start).dt.total_seconds()
+                            / time_step_size
+                        )
+                        .floor()
+                        .cast(pl.Int32)
+                        .alias("time_bucket")
+                    ]
+                ).filter(
+                    (pl.col("time_bucket") >= 0) & (pl.col("time_bucket") < interval)
+                )
+
+                # Calculate statistics
+                if df_with_buckets.height > 0:
+                    metrics_stats = df_with_buckets.group_by(
+                        ["service_name", "metric", "time_bucket"]
+                    ).agg(pl.col("value").mean().alias("mean_value"))
+
+                    for row in metrics_stats.iter_rows(named=True):
+                        service_name = row["service_name"]
+                        metric_name = row["metric"]
+                        time_bucket = row["time_bucket"]
+                        mean_value = row["mean_value"]
+
+                        service_id = service_lookup.get(service_name)
+                        metric_id = metric_lookup.get(metric_name)
+
+                        if (
+                            service_id is not None
+                            and metric_id is not None
+                            and 0 <= time_bucket < interval
+                        ):
+                            # Normalization processing
+                            metric_meta = self.metadata.metrics[metric_id]
+                            if (
+                                metric_meta.min_value is not None
+                                and metric_meta.max_value is not None
+                            ):
+                                value_range = (
+                                    metric_meta.max_value - metric_meta.min_value
+                                )
+                                if value_range > 0:
+                                    normalized_value = (
+                                        mean_value - metric_meta.min_value
+                                    ) / value_range
+                                else:
+                                    normalized_value = 0.0
+                            else:
+                                normalized_value = mean_value
+
+                            result[service_id, time_bucket, metric_id] = (
+                                normalized_value
+                            )
+
+                # Data smoothing
+                self._smooth_sparse_data(result, num_services, interval, num_metrics)
+
+            results.append(result)
+
+        return results
+
+    def _batch_process_traces(
+        self,
+        datapack: Path,
+        windows: list[tuple[datetime, datetime]],
+        overall_start: datetime,
+        overall_end: datetime,
+        interval: int,
+    ) -> list[np.ndarray]:
+        """Batch process trace data for all windows"""
+        num_services = len(self.metadata.services)
+        expected_features = 2  # latency and invocation count
+
+        # Load all trace data for the overall time range once
+        all_trace_data = []
+        for trace_file in self.trace_files:
+            df = (
+                pl.scan_parquet(datapack / trace_file)
+                .filter(
+                    (pl.col("time") >= overall_start) & (pl.col("time") <= overall_end)
+                )
+                .select(["time", "service_name", "duration"])
+                .collect()
+            )
+
+            if df.height > 0:
+                all_trace_data.append(df)
+
+        if not all_trace_data:
+            return [
+                np.zeros((num_services, interval, expected_features)) for _ in windows
+            ]
+
+        # Combine all trace data
+        combined_df = (
+            pl.concat(all_trace_data) if len(all_trace_data) > 1 else all_trace_data[0]
+        )
+
+        results = []
+        service_lookup = self.metadata.service_name_to_id
+
+        # Collect all latency values for normalization
+        all_latency_values = []
+
+        # Process each window
+        for window_start, window_end in windows:
+            result = np.zeros((num_services, interval, expected_features))
+
+            # Filter data for current window
+            window_data = combined_df.filter(
+                (pl.col("time") >= window_start) & (pl.col("time") <= window_end)
+            )
+
+            if window_data.height > 0:
+                # Calculate time buckets
+                window_duration = (window_end - window_start).total_seconds()
+                time_step_size = window_duration / interval if interval > 0 else 1.0
+
+                # Add time buckets
+                df_with_buckets = window_data.with_columns(
+                    [
+                        (
+                            (pl.col("time") - window_start).dt.total_seconds()
+                            / time_step_size
+                        )
+                        .floor()
+                        .cast(pl.Int32)
+                        .alias("time_bucket")
+                    ]
+                ).filter(
+                    (pl.col("time_bucket") >= 0) & (pl.col("time_bucket") < interval)
+                )
+
+                # Calculate latency and invocation statistics
+                if df_with_buckets.height > 0:
+                    trace_stats = df_with_buckets.group_by(
+                        ["service_name", "time_bucket"]
+                    ).agg(
+                        [
+                            pl.col("duration").mean().alias("avg_latency"),
+                            pl.col("duration").count().alias("invocation_count"),
+                        ]
+                    )
+
+                    for row in trace_stats.iter_rows(named=True):
+                        service_name = row["service_name"]
+                        time_bucket = row["time_bucket"]
+                        avg_latency = row["avg_latency"]
+                        invocation_count = row["invocation_count"]
+
+                        service_id = service_lookup.get(service_name)
+                        if service_id is not None and 0 <= time_bucket < interval:
+                            latency_val = (
+                                avg_latency if avg_latency is not None else 0.0
+                            )
+                            count_val = (
+                                invocation_count
+                                if invocation_count is not None
+                                else 0.0
+                            )
+
+                            result[service_id, time_bucket, 0] = latency_val
+                            result[service_id, time_bucket, 1] = count_val
+
+                            if latency_val > 0:
+                                all_latency_values.append(latency_val)
+
+                # Data smoothing
+                self._smooth_sparse_data(
+                    result, num_services, interval, expected_features
+                )
+
+            results.append(result)
+
+        # Apply Z-score normalization to all latency values across all windows
+        if all_latency_values and len(all_latency_values) > 1:
+            mean_latency = np.mean(all_latency_values)
+            std_latency = np.std(all_latency_values)
+
+            if std_latency > 1e-8:
+                for result in results:
+                    result[:, :, 0] = (result[:, :, 0] - mean_latency) / std_latency
+
+        return results
 
     def _smooth_sparse_data(
         self, data: np.ndarray, num_services: int, interval: int, num_features: int

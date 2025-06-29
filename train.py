@@ -22,15 +22,9 @@ class ChunkDataset(Dataset):
         self,
         samples: List[DataSample],
         metadata: DatasetMetadata,
-        shuffle: bool = False,
     ):
         self.metadata = metadata
         self.node_num = len(metadata.services)
-
-        # Shuffle samples at initialization if requested
-        if shuffle:
-            samples = samples.copy()
-            random.shuffle(samples)
 
         self.samples = samples
 
@@ -181,7 +175,7 @@ def load_data(
     for label, samples in label_to_samples.items():
         # Shuffle samples for this label
         label_samples = samples.copy()
-        random.shuffle(label_samples)
+        # random.shuffle(label_samples)
 
         # Split this label's samples
         split_idx = int(len(label_samples) * train_ratio)
@@ -233,8 +227,8 @@ def create_data_loaders(
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
     # Create datasets with shuffling for training data
-    train_dataset = ChunkDataset(train_samples, metadata, shuffle=True)
-    test_dataset = ChunkDataset(test_samples, metadata, shuffle=False)
+    train_dataset = ChunkDataset(train_samples, metadata)
+    test_dataset = ChunkDataset(test_samples, metadata)
 
     batch_size = config.get("training.batch_size")
 
