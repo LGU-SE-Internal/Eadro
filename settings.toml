@@ -33,8 +33,6 @@ metric_files = [
 ]
 trace_files = ["abnormal_traces.parquet", "normal_traces.parquet"]
 label_files = ["injection.json", "env.json"]
-sample_interval = 60
-sample_step = 1
 
 # Training configuration
 [training]
@@ -44,8 +42,8 @@ device = "cuda"       # cuda, cpu, or auto
 epochs = 200
 batch_size = 256
 lr = 0.001
-patience = 10
-train_ratio = 0.7
+patience = 20
+train_ratio = 0.9
 evaluation_epoch = 10
 
 # Learning rate scheduler configuration
@@ -103,15 +101,15 @@ attn_drop = 0.0
 # Experiment management configuration
 [experiment]
 name_prefix = "exp"
-description = "Default experiment description"
-tags = []
+description = "EADRO anomaly detection and fault localization experiment"
+tags = ["eadro", "anomaly-detection", "fault-localization"]
 log_level = "INFO"
 log_rotation = "1 day"
 metadata_save_frequency = 10
 checkpoint_frequency = 10
 auto_cleanup = true
 max_checkpoints = 5
-primary_metric = "val_accuracy"
+primary_metric = "HR@1"
 
 # Paths configuration - updated with experiment-specific paths
 [paths]
@@ -122,11 +120,3 @@ logs_dir = "logs"
 inference_dir = "inference"
 chunks_dir = "chunks/"
 cache_dir = ".cache/"
-
-# Weights & Biases configuration
-[wandb]
-enabled = true
-project = "eadro-training"
-entity = ""                # Set your W&B entity here
-tags = []
-notes = ""

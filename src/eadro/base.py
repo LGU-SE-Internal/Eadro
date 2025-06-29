@@ -1,7 +1,7 @@
 import os
 import time
 import copy
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any, Union
 
 import torch
 from torch import nn
@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.metrics import ndcg_score
 from loguru import logger
 
+from src.exp.config import Config
 from .model import MainModel
 
 
@@ -21,7 +22,7 @@ class BaseModel(nn.Module):
         metric_num: int,
         node_num: int,
         device: str,
-        config: Any,
+        config: Config,
     ) -> None:
         """
         Initialize the base model for EADRO
@@ -42,8 +43,8 @@ class BaseModel(nn.Module):
         self.device = device
 
         # Learning rate scheduler parameters
-        lr_scheduler = config.get("training.lr_scheduler.type")
-        self.lr_scheduler_type = lr_scheduler.lower()
+        lr_scheduler_type = config.get("training.lr_scheduler.type")
+        self.lr_scheduler_type = lr_scheduler_type.lower()
         self.lr_step_size = config.get("training.lr_scheduler.step_size")
         self.lr_gamma = config.get("training.lr_scheduler.gamma")
         self.lr_warmup_epochs = config.get("training.lr_scheduler.warmup_epochs")

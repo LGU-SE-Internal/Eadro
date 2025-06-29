@@ -1,5 +1,6 @@
 import json
 import shutil
+import torch
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,6 @@ from typing import (
     TypedDict,
 )
 
-import torch
 from loguru import logger
 
 from .config import Config
@@ -358,7 +358,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             checkpoint_path = self.checkpoint_dir / f"checkpoint_epoch_{epoch:04d}.ckpt"
             torch.save(checkpoint_data, checkpoint_path)
             checkpoint_paths.append(str(checkpoint_path))
-            logger.info(f"Saved checkpoint at epoch {epoch}: {checkpoint_path}")
+            logger.debug(f"Saved checkpoint at epoch {epoch}: {checkpoint_path}")
 
         # Best checkpoint
         if is_best:
@@ -379,7 +379,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             self.metadata["best_metrics"] = metrics.copy()
             self.metadata["training_info"]["best_epoch"] = epoch
 
-            logger.info(
+            logger.debug(
                 f"Saved best checkpoint at epoch {epoch}: {best_checkpoint_path}"
             )
 
@@ -412,6 +412,52 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         self._save_metadata()
 
         return str(latest_checkpoint_path)
+
+    def log_metrics(
+        self, epoch: int, metrics: MetricsDict, phase: str = "train"
+    ) -> None:
+        """Log metrics for the current epoch"""
+        entry: MetricsLogEntry = {
+            "epoch": epoch,
+            "phase": phase,
+            "timestamp": datetime.now().isoformat(),
+            "metrics": metrics.copy(),
+        }
+
+        self.metadata["metrics_history"].append(entry)
+
+        # Save metadata periodically
+        frequency = self.config.get("experiment.metadata_save_frequency")
+        if epoch % frequency == 0:
+            self._save_metadata()
+
+    def save_inference_results(
+        self, results: PredictionResult, filename: Optional[str] = None
+    ) -> str:
+        """Save inference results to file"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"inference_results_{timestamp}.json"
+
+        results_path = self.inference_dir / filename
+
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+
+        logger.info(f"Saved inference results to: {results_path}")
+        return str(results_path)
+
+    def get_experiment_summary(self) -> ConfigDict:
+        """Get experiment summary"""
+        return {
+            "experiment_name": self.experiment_name,
+            "status": self.metadata["status"],
+            "total_epochs": self.metadata["training_info"]["total_epochs"],
+            "best_epoch": self.metadata["training_info"]["best_epoch"],
+            "best_metrics": self.metadata["best_metrics"],
+            "total_checkpoints": len(self.metadata["checkpoints"]),
+            "metrics_entries": len(self.metadata["metrics_history"]),
+        }
 
     def load_checkpoint(
         self,
@@ -466,36 +512,6 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         return checkpoint
-
-    def log_metrics(
-        self, epoch: int, metrics: MetricsDict, phase: str = "train"
-    ) -> None:
-        """Log training/validation metrics"""
-        log_entry: MetricsLogEntry = {
-            "epoch": epoch,
-            "phase": phase,
-            "timestamp": datetime.now().isoformat(),
-            "metrics": metrics,
-        }
-
-        self.metadata["metrics_history"].append(log_entry)
-
-        # Log to console
-        metrics_str = ", ".join(
-            [
-                f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
-                for k, v in metrics.items()
-            ]
-        )
-        logger.info(f"Epoch {epoch} [{phase}] - {metrics_str}")
-
-        # Save metadata periodically
-        metadata_save_freq = self.config.get("experiment.metadata_save_frequency")
-        assert metadata_save_freq is not None, (
-            "experiment.metadata_save_frequency must be configured"
-        )
-        if epoch % int(metadata_save_freq) == 0:
-            self._save_metadata()
 
     def run_training(
         self,
@@ -601,7 +617,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                     break
 
                 epoch_time = (datetime.now() - epoch_start_time).total_seconds()
-                logger.info(f"Epoch {epoch} completed in {epoch_time:.2f}s")
+                logger.debug(f"Epoch {epoch} completed in {epoch_time:.2f}s")
 
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")
@@ -629,14 +645,11 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         save_results: bool = True,
         **inference_kwargs,
     ) -> PredictionResult:
-        """Run inference"""
         assert self.inference_handler is not None, "Inference handler not provided"
 
-        # Load checkpoint if needed
         if checkpoint_path is not None or load_best:
             self.load_model_from_checkpoint(model, checkpoint_path, load_best)
 
-        # Run inference
         predictions = self.inference_handler.predict(model, data, **inference_kwargs)
 
         # Postprocess results
@@ -649,28 +662,6 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             self.save_inference_results(results)
 
         return results
-
-    def save_inference_results(
-        self, results: PredictionResult, filename: Optional[str] = None
-    ) -> str:
-        """Save inference results"""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"inference_results_{timestamp}.json"
-
-        results_path = self.inference_dir / filename
-
-        results_with_metadata = {
-            "experiment_name": self.experiment_name,
-            "timestamp": datetime.now().isoformat(),
-            "results": self._deep_convert_for_json(results),
-        }
-
-        with open(results_path, "w") as f:
-            json.dump(results_with_metadata, f, indent=2, default=str)
-
-        logger.info(f"Saved inference results: {results_path}")
-        return str(results_path)
 
     def _cleanup_checkpoints(self) -> None:
         """Cleanup old checkpoints based on configuration"""
@@ -716,61 +707,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         self.metadata["checkpoints"] = keep_checkpoints
 
         if removed_count > 0:
-            logger.info(f"Cleaned up {removed_count} old checkpoint files")
-
-    def get_experiment_summary(self) -> ConfigDict:
-        """Get experiment summary"""
-        return {
-            "experiment_name": self.experiment_name,
-            "status": self.metadata.get("status", "unknown"),
-            "created_at": self.metadata.get("created_at"),
-            "total_epochs": self.metadata["training_info"]["total_epochs"],
-            "best_epoch": self.metadata["training_info"]["best_epoch"],
-            "best_metrics": self.metadata.get("best_metrics", {}),
-            "total_checkpoints": len(self.metadata.get("checkpoints", [])),
-            "training_time": self.metadata["training_info"].get("training_time", 0),
-            "experiment_dir": str(self.experiment_dir),
-        }
-
-    def list_checkpoints(self) -> List[CheckpointInfo]:
-        """List all checkpoints"""
-        return self.metadata.get("checkpoints", [])
-
-    def get_metrics_history(self, phase: Optional[str] = None) -> List[MetricsLogEntry]:
-        """Get metrics history"""
-        history = self.metadata.get("metrics_history", [])
-
-        if phase:
-            history = [entry for entry in history if entry.get("phase") == phase]
-
-        return history
-
-    def export_experiment(
-        self, export_path: str, include_checkpoints: bool = True
-    ) -> str:
-        """Export experiment to archive"""
-        export_path_obj = Path(export_path)
-
-        if include_checkpoints:
-            # Archive entire experiment directory
-            shutil.make_archive(str(export_path_obj), "zip", self.experiment_dir)
-        else:
-            # Archive only metadata and logs
-            temp_dir = export_path_obj.parent / f"temp_{self.experiment_name}"
-            temp_dir.mkdir(exist_ok=True)
-
-            # Copy metadata and logs
-            shutil.copy2(self.experiment_dir / "experiment_metadata.json", temp_dir)
-            if self.logs_dir.exists():
-                shutil.copytree(self.logs_dir, temp_dir / "logs")
-            if self.inference_dir.exists():
-                shutil.copytree(self.inference_dir, temp_dir / "inference")
-
-            shutil.make_archive(str(export_path_obj), "zip", temp_dir)
-            shutil.rmtree(temp_dir)
-
-        logger.info(f"Exported experiment to: {export_path_obj}.zip")
-        return f"{export_path_obj}.zip"
+            logger.debug(f"Cleaned up {removed_count} old checkpoint files")
 
     @classmethod
     def load_experiment(
