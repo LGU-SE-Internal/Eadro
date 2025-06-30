@@ -17,8 +17,8 @@ class ServiceMetadata:
 @dataclass
 class MetricMetadata:
     name: str
-    min_value: Optional[float] = None  # unit: milliseconds
-    max_value: Optional[float] = None  # unit: milliseconds
+    min_value: float = 9999999999999
+    max_value: float = -9999999999999
 
 
 @dataclass
@@ -31,6 +31,7 @@ class LogTemplateMetadata:
 @dataclass
 class TraceMetadata:
     span_name: str
+    service_name: str
     min_duration: Optional[float] = None  # unit: milliseconds
     max_duration: Optional[float] = None  # unit: milliseconds
 
@@ -97,7 +98,7 @@ class DataSample:
     log: np.ndarray = field(default_factory=lambda: np.array([]))
     trace: np.ndarray = field(default_factory=lambda: np.array([]))
     metric: np.ndarray = field(default_factory=lambda: np.array([]))
-    
+
     # Add computed property for service ID (similar to old preprocessing culprit field)
     def get_gt_service_id(self, service_name_to_id: dict) -> int:
         """Get ground truth service ID, return -1 if not found or no fault"""

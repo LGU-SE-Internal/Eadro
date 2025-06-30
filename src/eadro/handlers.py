@@ -280,10 +280,12 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
 
 class OptimizerAdapter:
-    """Adapter to make torch optimizers compatible with HasStateDict protocol"""
+    """Adapter to make torch optimizers compatible with HasParamGroups protocol"""
 
     def __init__(self, optimizer: torch.optim.Optimizer):  # type: ignore
         self.optimizer = optimizer
+        # Directly expose param_groups as an attribute for protocol compatibility
+        self.param_groups = optimizer.param_groups
 
     def state_dict(self) -> Dict[str, torch.Tensor]:
         return self.optimizer.state_dict()
@@ -302,11 +304,6 @@ class OptimizerAdapter:
     def step(self) -> None:
         """Optimization step"""
         self.optimizer.step()
-
-    @property
-    def param_groups(self):
-        """Access to parameter groups"""
-        return self.optimizer.param_groups
 
 
 class EadroModelHandler(ModelHandler[MainModel]):

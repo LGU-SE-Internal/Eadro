@@ -33,7 +33,7 @@ def get_device(config: Config) -> str:
     return "cpu"
 
 
-app = typer.Typer()
+app = typer.Typer(pretty_exceptions_show_locals=False)
 
 
 @app.command()

@@ -126,7 +126,7 @@ class Processor(DataProcessor):
         3. split to chunks(each chunk is the data within a certain time range, will be used for training/testing)
         """
         self.derive_files()
-        self.datapacks = self._load_datapacks(self.dataset)
+        self.datapacks = self._load_datapacks(self.dataset)[:60]
         self.metadata = self.create_metadata()
 
         samples: list[DataSample] = []
@@ -173,6 +173,7 @@ class Processor(DataProcessor):
         all_log_templates = set()
         service_calling_edges = []
         metric_stats = {}
+        span_duration_stats = {}  # {(span_name, service_name): {"min": float, "max": float}}
 
         for datapack in tqdm(self.datapacks, desc="Processing datapack metadata"):
             # Batch process all file types to reduce disk I/O
@@ -256,6 +257,39 @@ class Processor(DataProcessor):
                 all_services.update(unique_data["service_name"].to_list())
                 all_span_names.update(unique_data["span_name"].to_list())
 
+                # Collect duration statistics for each span-service combination
+                duration_stats = (
+                    df.select(["service_name", "span_name", "duration"])
+                    .group_by(["service_name", "span_name"])
+                    .agg(
+                        [
+                            pl.col("duration").min().alias("min_duration"),
+                            pl.col("duration").max().alias("max_duration"),
+                        ]
+                    )
+                    .collect()
+                )
+
+                for row in duration_stats.iter_rows(named=True):
+                    service_name = row["service_name"]
+                    span_name = row["span_name"]
+                    min_duration = row["min_duration"]
+                    max_duration = row["max_duration"]
+
+                    key = (span_name, service_name)
+                    if key not in span_duration_stats:
+                        span_duration_stats[key] = {
+                            "min": min_duration,
+                            "max": max_duration,
+                        }
+                    else:
+                        span_duration_stats[key]["min"] = min(
+                            span_duration_stats[key]["min"], min_duration
+                        )
+                        span_duration_stats[key]["max"] = max(
+                            span_duration_stats[key]["max"], max_duration
+                        )
+
             # Process service calling edges - only process once
             for trace_file in self.trace_files:
                 df = pl.scan_parquet(datapack / trace_file)
@@ -272,6 +306,7 @@ class Processor(DataProcessor):
                         pl.col("span_id"),
                         pl.col("parent_span_id"),
                         pl.col("service_name"),
+                        pl.col("duration"),
                     ]
                 ).collect()
 
@@ -336,9 +371,17 @@ class Processor(DataProcessor):
         metadata.log_template_to_id = {
             template.template: template.id for template in metadata.log_templates
         }
-        metadata.traces = [
-            TraceMetadata(span_name=span_name) for span_name in sorted(all_span_names)
-        ]
+
+        # Create trace metadata with duration statistics
+        metadata.traces = []
+        for (span_name, service_name), duration_info in span_duration_stats.items():
+            trace_meta = TraceMetadata(
+                span_name=span_name,
+                service_name=service_name,
+                min_duration=duration_info["min"],
+                max_duration=duration_info["max"],
+            )
+            metadata.traces.append(trace_meta)
 
         # Convert service calling edges from service names to service IDs
         metadata.service_calling_edges = []
@@ -391,19 +434,18 @@ class Processor(DataProcessor):
             and "ABNORMAL_END" in env
         ), f"Invalid env file format in {datapack / 'env.json'}."
 
-        tz = pytz.timezone(env["TIMEZONE"])
-        normal_st = datetime.fromtimestamp(int(env["NORMAL_START"]), tz).astimezone(
-            pytz.UTC
-        )
-        normal_et = datetime.fromtimestamp(int(env["NORMAL_END"]), tz).astimezone(
-            pytz.UTC
-        )
-        abnormal_st = datetime.fromtimestamp(int(env["ABNORMAL_START"]), tz).astimezone(
-            pytz.UTC
-        )
-        abnormal_et = datetime.fromtimestamp(int(env["ABNORMAL_END"]), tz).astimezone(
-            pytz.UTC
-        )
+        normal_st = datetime.fromtimestamp(
+            int(env["NORMAL_START"]), pytz.UTC
+        ) - timedelta(hours=8)
+        normal_et = datetime.fromtimestamp(
+            int(env["NORMAL_END"]), pytz.UTC
+        ) - timedelta(hours=8)
+        abnormal_st = datetime.fromtimestamp(
+            int(env["ABNORMAL_START"]), pytz.UTC
+        ) - timedelta(hours=8)
+        abnormal_et = datetime.fromtimestamp(
+            int(env["ABNORMAL_END"]), pytz.UTC
+        ) - timedelta(hours=8)
 
         return (
             normal_st,
@@ -497,6 +539,7 @@ class Processor(DataProcessor):
         ):
             time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
 
+        # 单模态里的每个文件的时间可能不一样，可能有重合也有可能不重合； 所以应该按照时间和是否异常来读取所有的时间区间
         for start, end, fault_type, gt_service in time_range:
             for log_file in self.log_files:
                 log_dfs[log_file] = pl.scan_parquet(datapack / log_file).filter(
@@ -504,9 +547,10 @@ class Processor(DataProcessor):
                 )
 
             for metric_file in self.metric_files:
-                metric_dfs[metric_file] = pl.scan_parquet(
-                    datapack / metric_file
-                ).filter((pl.col("time") >= start) & (pl.col("time") <= end))
+                df = pl.scan_parquet(datapack / metric_file)
+                metric_dfs[metric_file] = df.filter(
+                    (pl.col("time") >= start) & (pl.col("time") <= end)
+                )
 
             for trace_file in self.trace_files:
                 trace_dfs[trace_file] = pl.scan_parquet(datapack / trace_file).filter(
@@ -524,49 +568,95 @@ class Processor(DataProcessor):
                     gt_service=gt_service,
                     fault_type=fault_type,
                 )
-
-                # Process log data
-                for log_file in self.log_files:
-                    window_df = log_dfs[log_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.log = self._process_log_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.log.shape == (
-                        len(self.metadata.services),
-                        len(self.metadata.log_templates) + 1,
-                    )
-
-                # Process metrics data
-                for metric_file in self.metric_files:
-                    window_df = metric_dfs[metric_file].filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
-                    )
-                    sample.metric = self._process_metrics_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    assert sample.metric.shape == (
+                # Initialize accumulator for metric data
+                metric_accumulator = np.zeros(
+                    (
                         len(self.metadata.services),
                         interval,
                         len(self.metadata.metric_names),
                     )
+                )
 
-                # Process trace data
-                for trace_file in self.trace_files:
-                    window_df = trace_dfs[trace_file].filter(
+                for metric_file in metric_dfs.values():
+                    window_df = metric_file.filter(
                         (pl.col("time") >= current_time)
                         & (pl.col("time") <= window_end_time)
                     )
-                    sample.trace = self._process_traces_from_df(
+                    metric_result = self._process_metrics_from_df(
                         window_df, current_time, window_end_time
                     )
-                    assert sample.trace.shape == (
+                    metric_accumulator += metric_result
+
+                sample.metric = metric_accumulator
+
+                assert sample.metric.shape == (
+                    len(self.metadata.services),
+                    interval,
+                    len(self.metadata.metric_names),
+                )
+                if np.all(sample.metric == 0):
+                    logger.warning(
+                        f"Sample at {current_time} to {window_end_time} has all zero metrics, skipping."
+                    )
+
+                # Initialize accumulator for log data
+                log_accumulator = np.zeros(
+                    (
+                        len(self.metadata.services),
+                        len(self.metadata.log_templates) + 1,
+                    )
+                )
+
+                for log_file in log_dfs.values():
+                    window_df = log_file.filter(
+                        (pl.col("time") >= current_time)
+                        & (pl.col("time") <= window_end_time)
+                    )
+                    log_result = self._process_log_from_df(
+                        window_df, current_time, window_end_time
+                    )
+                    log_accumulator += log_result
+
+                sample.log = log_accumulator
+
+                assert sample.log.shape == (
+                    len(self.metadata.services),
+                    len(self.metadata.log_templates) + 1,
+                )
+                if np.all(sample.log == 0):
+                    logger.warning(
+                        f"Sample at {current_time} to {window_end_time} has all zero logs, skipping."
+                    )
+
+                # Initialize accumulator for trace data
+                trace_accumulator = np.zeros(
+                    (
                         len(self.metadata.services),
                         interval,
                         2,
+                    )
+                )
+
+                for trace_file in trace_dfs.values():
+                    window_df = trace_file.filter(
+                        (pl.col("time") >= current_time)
+                        & (pl.col("time") <= window_end_time)
+                    )
+                    trace_result = self._process_traces_from_df(
+                        window_df, current_time, window_end_time
+                    )
+                    trace_accumulator += trace_result
+
+                sample.trace = trace_accumulator
+
+                assert sample.trace.shape == (
+                    len(self.metadata.services),
+                    interval,
+                    2,
+                )
+                if np.all(sample.trace == 0):
+                    logger.warning(
+                        f"Sample at {current_time} to {window_end_time} has all zero traces, skipping."
                     )
 
                 samples.append(sample)
@@ -668,12 +758,12 @@ class Processor(DataProcessor):
             count = row["count"]
 
             service_id = service_lookup.get(service_name)
-            if service_id is not None:
-                template_id = template_lookup.get(template, 0)
-                assert 0 <= template_id < num_templates, (
-                    f"Template ID {template_id} out of bounds [0, {num_templates})"
-                )
-                result[service_id, template_id] += count
+            assert service_id is not None, "Service not found in metadata."
+            template_id = template_lookup.get(template, 0)
+            assert 0 <= template_id < num_templates, (
+                f"Template ID {template_id} out of bounds [0, {num_templates})"
+            )
+            result[service_id, template_id] += count
 
         assert result.shape == (num_services, num_templates), (
             f"Expected log result shape ({num_services}, {num_templates}), "
@@ -734,30 +824,29 @@ class Processor(DataProcessor):
             service_id = service_lookup.get(service_name)
             metric_id = metric_lookup.get(metric_name)
 
-            if (
-                service_id is not None
-                and metric_id is not None
-                and 0 <= time_bucket < interval
-            ):
-                # Normalization processing
-                metric_meta = self.metadata.metrics[metric_id]
-                if (
-                    metric_meta.min_value is not None
-                    and metric_meta.max_value is not None
-                ):
-                    value_range = metric_meta.max_value - metric_meta.min_value
-                    if value_range > 0:
-                        normalized_value = (
-                            mean_value - metric_meta.min_value
-                        ) / value_range
-                    else:
-                        normalized_value = 0.0
-                else:
-                    normalized_value = mean_value
+            assert service_id is not None and metric_id is not None, (
+                "Service or metric not found in metadata."
+            )
+            assert 0 <= time_bucket < interval, "Time bucket out of bounds."
+            metric_meta = self.metadata.metrics[metric_id]
 
-                result[service_id, time_bucket, metric_id] = normalized_value
+            assert (
+                metric_meta.max_value is not None or metric_meta.min_value is not None
+            )
 
-        # Data smoothing
+            value_range = metric_meta.max_value - metric_meta.min_value
+
+            if value_range < 0:
+                logger.warning(
+                    f"Metric {metric_name} for service {service_name} has invalid range: "
+                    f"max_value={metric_meta.max_value}, min_value={metric_meta.min_value}"
+                )
+
+            value_range += 1e-6  # Avoid division by zero
+
+            normalized_value = (mean_value - metric_meta.min_value) / value_range
+            result[service_id, time_bucket, metric_id] = normalized_value
+
         self._smooth_sparse_data(result, num_services, interval, num_metrics)
 
         assert result.shape == (num_services, interval, num_metrics), (
@@ -769,7 +858,6 @@ class Processor(DataProcessor):
     def _process_traces_from_df(
         self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
     ) -> np.ndarray:
-        """Helper method to process traces data from a pre-filtered DataFrame"""
         interval = int(self.config.sample_interval)  # type: ignore
         num_services = len(self.metadata.services)
         expected_features = 2  # latency and invocation count
@@ -830,12 +918,61 @@ class Processor(DataProcessor):
         # Data smoothing
         self._smooth_sparse_data(result, num_services, interval, expected_features)
 
-        # Z-score normalization
-        latency_values = result[:, :, 0].flatten()
-        if np.std(latency_values) > 1e-8:
-            mean_latency = np.mean(latency_values)
-            std_latency = np.std(latency_values)
-            result[:, :, 0] = (result[:, :, 0] - mean_latency) / std_latency
+        # Normalize latency using metadata statistics for each service
+        service_lookup = self.metadata.service_name_to_id
+
+        # Pre-compute service duration statistics for efficiency
+        service_duration_ranges = {}
+        for trace_meta in self.metadata.traces:
+            service_name = trace_meta.service_name
+            if service_name not in service_duration_ranges:
+                service_duration_ranges[service_name] = {
+                    "min": trace_meta.min_duration,
+                    "max": trace_meta.max_duration,
+                }
+            else:
+                # Update global min/max for this service
+                if trace_meta.min_duration is not None:
+                    if service_duration_ranges[service_name]["min"] is None:
+                        service_duration_ranges[service_name]["min"] = (
+                            trace_meta.min_duration
+                        )
+                    else:
+                        service_duration_ranges[service_name]["min"] = min(
+                            service_duration_ranges[service_name]["min"],
+                            trace_meta.min_duration,
+                        )
+
+                if trace_meta.max_duration is not None:
+                    if service_duration_ranges[service_name]["max"] is None:
+                        service_duration_ranges[service_name]["max"] = (
+                            trace_meta.max_duration
+                        )
+                    else:
+                        service_duration_ranges[service_name]["max"] = max(
+                            service_duration_ranges[service_name]["max"],
+                            trace_meta.max_duration,
+                        )
+
+        # Apply normalization for each service
+        for service_name, duration_range in service_duration_ranges.items():
+            service_id = service_lookup.get(service_name)
+            if service_id is not None:
+                global_min = duration_range["min"]
+                global_max = duration_range["max"]
+
+                if (
+                    global_min is not None
+                    and global_max is not None
+                    and global_max > global_min
+                ):
+                    service_latencies = result[service_id, :, 0]
+                    service_latencies = np.clip(
+                        service_latencies, global_min, global_max
+                    )
+                    result[service_id, :, 0] = (service_latencies - global_min) / (
+                        global_max - global_min
+                    )
 
         assert result.shape == (num_services, interval, expected_features), (
             f"Expected traces result shape ({num_services}, {interval}, {expected_features}), "

@@ -1,5 +1,4 @@
 import json
-import shutil
 import torch
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -78,7 +77,7 @@ class ExperimentMetadata(TypedDict):
 # Generic type variables
 ModelT = TypeVar("ModelT", bound="HasStateDict")
 DataT = TypeVar("DataT")
-OptimizerT = TypeVar("OptimizerT", bound="HasStateDict")
+OptimizerT = TypeVar("OptimizerT", bound="HasParamGroups")
 SchedulerT = TypeVar("SchedulerT", bound="HasStep")
 
 
@@ -88,6 +87,16 @@ class HasStateDict(Protocol):
     def load_state_dict(
         self, state_dict: Dict[str, torch.Tensor], strict: bool = True
     ) -> object: ...
+
+
+# Protocol for optimizers with param_groups
+class HasParamGroups(Protocol):
+    def state_dict(self) -> Dict[str, torch.Tensor]: ...
+    def load_state_dict(
+        self, state_dict: Dict[str, torch.Tensor], strict: bool = True
+    ) -> object: ...
+
+    param_groups: List[Dict[str, Union[float, int, str, bool]]]
 
 
 # Protocol for schedulers with step method
@@ -571,7 +580,10 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
 
                 # Validation phase
                 val_metrics = {}
-                if val_data is not None:
+                if (
+                    val_data is not None
+                    and epoch % self.config.get("training.evaluation_epoch") == 0
+                ):
                     val_metrics = self.training_handler.validate(
                         model, val_data, epoch=epoch
                     )
@@ -618,7 +630,12 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                     break
 
                 epoch_time = (datetime.now() - epoch_start_time).total_seconds()
-                logger.debug(f"Epoch {epoch} completed in {epoch_time:.2f}s")
+
+                current_lr = optimizer.param_groups[0]["lr"] if optimizer else "N/A"
+
+                logger.debug(
+                    f"Epoch {epoch} completed in {epoch_time:.2f}s, lr: {current_lr}"
+                )
 
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")
