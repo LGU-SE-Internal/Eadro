@@ -21,6 +21,7 @@ from loguru import logger
 import pytz
 from rcabench.openapi import InjectionApi, ApiClient, Configuration
 import random
+import time
 
 
 class Processor(DataProcessor):
@@ -126,7 +127,7 @@ class Processor(DataProcessor):
         3. split to chunks(each chunk is the data within a certain time range, will be used for training/testing)
         """
         self.derive_files()
-        self.datapacks = self._load_datapacks(self.dataset)[:60]
+        self.datapacks = self._load_datapacks(self.dataset)[:5]
         self.metadata = self.create_metadata()
 
         samples: list[DataSample] = []
@@ -501,8 +502,17 @@ class Processor(DataProcessor):
         return normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type
 
     def process_datapack(self, datapack: Path) -> list[DataSample]:
+        timings = {
+            "label_extraction": 0.0,
+            "initial_filtering_and_caching": 0.0,
+            "metric_processing": 0.0,
+            "log_processing": 0.0,
+            "trace_processing": 0.0,
+            "total_loop_time": 0.0,
+        }
         samples = []
 
+        t_start = time.perf_counter()
         if self.dataset == "rcabench":
             (
                 normal_st,
@@ -516,6 +526,7 @@ class Processor(DataProcessor):
             normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
                 self.extract_eadro_labels(datapack)
             )
+        timings["label_extraction"] = time.perf_counter() - t_start
 
         interval = self.config.sample_interval  # type: ignore
         sample_step = self.config.sample_step  # type: ignore
@@ -524,10 +535,6 @@ class Processor(DataProcessor):
             f"Sample interval for {self.dataset} is not defined in the config."
         )
         assert isinstance(interval, int), "Sample interval should be an integer."
-
-        log_dfs = {}
-        metric_dfs = {}
-        trace_dfs = {}
 
         time_range = []
         if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
@@ -539,25 +546,32 @@ class Processor(DataProcessor):
         ):
             time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
 
-        # 单模态里的每个文件的时间可能不一样，可能有重合也有可能不重合； 所以应该按照时间和是否异常来读取所有的时间区间
+        def concat_and_cache_dfs(
+            files: list[str], start_time, end_time
+        ) -> pl.DataFrame:
+            if not files:
+                return pl.DataFrame()
+
+            lazy_frames = [pl.scan_parquet(datapack / file) for file in files]
+            combined_lazy_frame = pl.concat(lazy_frames)
+
+            return combined_lazy_frame.filter(
+                (pl.col("time") >= start_time) & (pl.col("time") < end_time)
+            ).collect()
+
+        total_filtering_time = 0.0
+        total_loop_time = 0.0
+
         for start, end, fault_type, gt_service in time_range:
-            for log_file in self.log_files:
-                log_dfs[log_file] = pl.scan_parquet(datapack / log_file).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
-
-            for metric_file in self.metric_files:
-                df = pl.scan_parquet(datapack / metric_file)
-                metric_dfs[metric_file] = df.filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
-
-            for trace_file in self.trace_files:
-                trace_dfs[trace_file] = pl.scan_parquet(datapack / trace_file).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
+            t_start_filter = time.perf_counter()
+            # Pre-filter and cache data for the current time range
+            log_df_cached = concat_and_cache_dfs(self.log_files, start, end)
+            metric_df_cached = concat_and_cache_dfs(self.metric_files, start, end)
+            trace_df_cached = concat_and_cache_dfs(self.trace_files, start, end)
+            total_filtering_time += time.perf_counter() - t_start_filter
 
             current_time = start
+            t_loop_start = time.perf_counter()
             while current_time < end:
                 window_end_time = current_time + timedelta(seconds=interval)
                 if window_end_time > end:
@@ -569,6 +583,7 @@ class Processor(DataProcessor):
                     fault_type=fault_type,
                 )
                 # Initialize accumulator for metric data
+                t_metric_start = time.perf_counter()
                 metric_accumulator = np.zeros(
                     (
                         len(self.metadata.services),
@@ -577,15 +592,16 @@ class Processor(DataProcessor):
                     )
                 )
 
-                for metric_file in metric_dfs.values():
-                    window_df = metric_file.filter(
+                if not metric_df_cached.is_empty():
+                    window_df = metric_df_cached.lazy().filter(
                         (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
+                        & (pl.col("time") < window_end_time)
                     )
                     metric_result = self._process_metrics_from_df(
                         window_df, current_time, window_end_time
                     )
                     metric_accumulator += metric_result
+                timings["metric_processing"] += time.perf_counter() - t_metric_start
 
                 sample.metric = metric_accumulator
 
@@ -600,6 +616,7 @@ class Processor(DataProcessor):
                     )
 
                 # Initialize accumulator for log data
+                t_log_start = time.perf_counter()
                 log_accumulator = np.zeros(
                     (
                         len(self.metadata.services),
@@ -607,15 +624,16 @@ class Processor(DataProcessor):
                     )
                 )
 
-                for log_file in log_dfs.values():
-                    window_df = log_file.filter(
+                if not log_df_cached.is_empty():
+                    window_df = log_df_cached.lazy().filter(
                         (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
+                        & (pl.col("time") < window_end_time)
                     )
                     log_result = self._process_log_from_df(
                         window_df, current_time, window_end_time
                     )
                     log_accumulator += log_result
+                timings["log_processing"] += time.perf_counter() - t_log_start
 
                 sample.log = log_accumulator
 
@@ -629,6 +647,7 @@ class Processor(DataProcessor):
                     )
 
                 # Initialize accumulator for trace data
+                t_trace_start = time.perf_counter()
                 trace_accumulator = np.zeros(
                     (
                         len(self.metadata.services),
@@ -637,15 +656,16 @@ class Processor(DataProcessor):
                     )
                 )
 
-                for trace_file in trace_dfs.values():
-                    window_df = trace_file.filter(
+                if not trace_df_cached.is_empty():
+                    window_df = trace_df_cached.lazy().filter(
                         (pl.col("time") >= current_time)
-                        & (pl.col("time") <= window_end_time)
+                        & (pl.col("time") < window_end_time)
                     )
                     trace_result = self._process_traces_from_df(
                         window_df, current_time, window_end_time
                     )
                     trace_accumulator += trace_result
+                timings["trace_processing"] += time.perf_counter() - t_trace_start
 
                 sample.trace = trace_accumulator
 
@@ -661,7 +681,12 @@ class Processor(DataProcessor):
 
                 samples.append(sample)
                 current_time += timedelta(seconds=sample_step)
+            total_loop_time += time.perf_counter() - t_loop_start
 
+        timings["initial_filtering_and_caching"] = total_filtering_time
+        timings["total_loop_time"] = total_loop_time
+
+        logger.info(f"Timings for {datapack.name}: {timings}")
         return samples
 
     def _smooth_sparse_data(
@@ -850,7 +875,7 @@ class Processor(DataProcessor):
         self._smooth_sparse_data(result, num_services, interval, num_metrics)
 
         assert result.shape == (num_services, interval, num_metrics), (
-            f"Expected metrics result shape ({num_services}, {interval}, {num_metrics}), "
+            f"Expected metrics result shape ({num_services}, {interval, num_metrics}), "
             f"got {result.shape}"
         )
         return result
