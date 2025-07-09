@@ -547,28 +547,32 @@ class Processor(DataProcessor):
             time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
 
         def concat_and_cache_dfs(
-            files: list[str], start_time, end_time
+            files: list[str], start: datetime, end: datetime
         ) -> pl.DataFrame:
-            if not files:
+            """Scans, filters, and concatenates multiple parquet files into a single DataFrame."""
+            lazy_frames = [
+                pl.scan_parquet(datapack / f).filter(
+                    (pl.col("time") >= start) & (pl.col("time") <= end)
+                )
+                for f in files
+            ]
+            if not lazy_frames:
+                # Return an empty DataFrame with expected schema if no files
+                # This part might need adjustment if schemas differ or are unknown beforehand
                 return pl.DataFrame()
-
-            lazy_frames = [pl.scan_parquet(datapack / file) for file in files]
-            combined_lazy_frame = pl.concat(lazy_frames)
-
-            return combined_lazy_frame.filter(
-                (pl.col("time") >= start_time) & (pl.col("time") < end_time)
-            ).collect()
-
-        total_filtering_time = 0.0
-        total_loop_time = 0.0
+            return pl.concat(lazy_frames).collect()
 
         for start, end, fault_type, gt_service in time_range:
             t_start_filter = time.perf_counter()
-            # Pre-filter and cache data for the current time range
+
+            # Cache all data for the current time range (normal/abnormal)
             log_df_cached = concat_and_cache_dfs(self.log_files, start, end)
             metric_df_cached = concat_and_cache_dfs(self.metric_files, start, end)
             trace_df_cached = concat_and_cache_dfs(self.trace_files, start, end)
-            total_filtering_time += time.perf_counter() - t_start_filter
+
+            timings["initial_filtering_and_caching"] += (
+                time.perf_counter() - t_start_filter
+            )
 
             current_time = start
             t_loop_start = time.perf_counter()
@@ -592,15 +596,14 @@ class Processor(DataProcessor):
                     )
                 )
 
-                if not metric_df_cached.is_empty():
-                    window_df = metric_df_cached.lazy().filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") < window_end_time)
-                    )
-                    metric_result = self._process_metrics_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    metric_accumulator += metric_result
+                window_df = metric_df_cached.lazy().filter(
+                    (pl.col("time") >= current_time)
+                    & (pl.col("time") < window_end_time)
+                )
+                metric_result = self._process_metrics_from_df(
+                    window_df, current_time, window_end_time
+                )
+                metric_accumulator += metric_result
                 timings["metric_processing"] += time.perf_counter() - t_metric_start
 
                 sample.metric = metric_accumulator
@@ -624,15 +627,14 @@ class Processor(DataProcessor):
                     )
                 )
 
-                if not log_df_cached.is_empty():
-                    window_df = log_df_cached.lazy().filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") < window_end_time)
-                    )
-                    log_result = self._process_log_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    log_accumulator += log_result
+                window_df = log_df_cached.lazy().filter(
+                    (pl.col("time") >= current_time)
+                    & (pl.col("time") < window_end_time)
+                )
+                log_result = self._process_log_from_df(
+                    window_df, current_time, window_end_time
+                )
+                log_accumulator += log_result
                 timings["log_processing"] += time.perf_counter() - t_log_start
 
                 sample.log = log_accumulator
@@ -656,15 +658,14 @@ class Processor(DataProcessor):
                     )
                 )
 
-                if not trace_df_cached.is_empty():
-                    window_df = trace_df_cached.lazy().filter(
-                        (pl.col("time") >= current_time)
-                        & (pl.col("time") < window_end_time)
-                    )
-                    trace_result = self._process_traces_from_df(
-                        window_df, current_time, window_end_time
-                    )
-                    trace_accumulator += trace_result
+                window_df = trace_df_cached.lazy().filter(
+                    (pl.col("time") >= current_time)
+                    & (pl.col("time") < window_end_time)
+                )
+                trace_result = self._process_traces_from_df(
+                    window_df, current_time, window_end_time
+                )
+                trace_accumulator += trace_result
                 timings["trace_processing"] += time.perf_counter() - t_trace_start
 
                 sample.trace = trace_accumulator
@@ -681,10 +682,7 @@ class Processor(DataProcessor):
 
                 samples.append(sample)
                 current_time += timedelta(seconds=sample_step)
-            total_loop_time += time.perf_counter() - t_loop_start
-
-        timings["initial_filtering_and_caching"] = total_filtering_time
-        timings["total_loop_time"] = total_loop_time
+            timings["total_loop_time"] += time.perf_counter() - t_loop_start
 
         logger.info(f"Timings for {datapack.name}: {timings}")
         return samples
