@@ -27,6 +27,7 @@ from src.preprocessing.base import DataSample, DatasetMetadata
 from typing import Counter
 import pickle
 import dgl
+import glob
 
 
 def collate_fn(
@@ -68,9 +69,51 @@ class ChunkDataset(Dataset):
             graph = dgl.graph(self.edges, num_nodes=self.node_num)
 
             # Add node features
-            graph.ndata["logs"] = torch.FloatTensor(sample.log)
-            graph.ndata["metrics"] = torch.FloatTensor(sample.metric)
-            graph.ndata["traces"] = torch.FloatTensor(sample.trace)
+            logs_tensor = torch.FloatTensor(sample.log)
+
+            metrics_array = np.array(sample.metric)
+            if np.isnan(metrics_array).any():
+                metrics_array = np.nan_to_num(metrics_array, nan=0.0)
+            metrics_tensor = torch.FloatTensor(metrics_array)
+
+            traces_array = np.array(sample.trace)
+            if np.isnan(traces_array).any():
+                logger.warning(
+                    f"Found NaN values in traces array for sample {len(self.graphs)}"
+                )
+                traces_array = np.nan_to_num(traces_array, nan=0.0)
+
+            traces_tensor = torch.FloatTensor(traces_array)
+
+            logs_array = np.array(sample.log)
+            if np.isnan(logs_array).any():
+                logs_array = np.nan_to_num(logs_array, nan=0.0)
+                logs_tensor = torch.FloatTensor(logs_array)
+
+            assert not torch.isnan(logs_tensor).any(), (
+                f"logs data contains NaN values in sample {len(self.graphs)}"
+            )
+            assert not torch.isnan(metrics_tensor).any(), (
+                f"metrics data contains NaN values in sample {len(self.graphs)}"
+            )
+            assert not torch.isnan(traces_tensor).any(), (
+                f"traces data contains NaN values in sample {len(self.graphs)}"
+            )
+
+            # Additional check for infinite values
+            assert torch.isfinite(logs_tensor).all(), (
+                f"logs data contains infinite values in sample {len(self.graphs)}"
+            )
+            assert torch.isfinite(metrics_tensor).all(), (
+                f"metrics data contains infinite values in sample {len(self.graphs)}"
+            )
+            assert torch.isfinite(traces_tensor).all(), (
+                f"traces data contains infinite values in sample {len(self.graphs)}"
+            )
+
+            graph.ndata["logs"] = logs_tensor
+            graph.ndata["metrics"] = metrics_tensor
+            graph.ndata["traces"] = traces_tensor
 
             # Convert ground truth service to label
             label = sample.get_gt_service_id(self.metadata.service_name_to_id)
@@ -134,16 +177,42 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         self,
         config: Config,
     ) -> Tuple[List[DataSample], List[DataSample], DatasetMetadata]:
-        """Load processed dataset samples and metadata"""
         dataset_name = config.get("dataset")
 
-        # Load samples
-        samples_path = Path(f".cache/{dataset_name}_samples.pkl")
-        if not samples_path.exists():
-            raise FileNotFoundError(f"Samples file not found: {samples_path}")
+        batch_pattern = f".cache/{dataset_name}_samples_batch_*.pkl"
+        batch_files = glob.glob(batch_pattern)
 
-        with open(samples_path, "rb") as f:
-            all_samples = pickle.load(f)
+        single_file_path = Path(f".cache/{dataset_name}_samples.pkl")
+
+        all_samples = []
+
+        if batch_files:
+            # Load from batch files
+            logger.info(f"Found {len(batch_files)} batch files to load")
+            batch_files.sort()  # Ensure consistent ordering
+
+            for batch_file in batch_files:
+                logger.info(f"Loading batch file: {batch_file}")
+                with open(batch_file, "rb") as f:
+                    batch_samples = pickle.load(f)
+                    all_samples.extend(batch_samples)
+                    logger.info(
+                        f"Loaded {len(batch_samples)} samples from {batch_file}"
+                    )
+
+            logger.info(f"Total samples loaded from all batches: {len(all_samples)}")
+
+        elif single_file_path.exists():
+            # Fallback to single file for backward compatibility
+            logger.info("Loading from single samples file")
+            with open(single_file_path, "rb") as f:
+                all_samples = pickle.load(f)
+
+        else:
+            raise FileNotFoundError(
+                f"No sample files found. Expected either batch files matching '{batch_pattern}' "
+                f"or single file '{single_file_path}'"
+            )
 
         # Load metadata
         metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
@@ -162,11 +231,6 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
         # Log label distribution before balancing
         logger.info("Original label distribution:")
-        for label, samples in label_to_samples.items():
-            logger.info(f"Service {label}: {len(samples)} samples")
-
-        # Log balanced distribution
-        logger.info("Balanced label distribution:")
         for label, samples in label_to_samples.items():
             logger.info(f"Service {label}: {len(samples)} samples")
 
@@ -195,8 +259,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
                 train_samples = []
                 for label, samples in train_label_to_samples.items():
-                    # Downsample to minimum count
-                    balanced_samples = samples[:min_train_count]
+                    balanced_samples = samples[: min_train_count * 2]
                     train_samples.extend(balanced_samples)
                     logger.info(
                         f"Training set - Service {label}: {len(balanced_samples)} samples (original: {len(samples)})"

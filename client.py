@@ -41,6 +41,9 @@ def create_dataset(
     config_file: Optional[str] = typer.Option(
         "settings.toml", "--config", help="Config file path"
     ),
+    n_workers: int = typer.Option(
+        2, "--workers", help="Number of parallel workers for dataset creation"
+    ),
 ) -> None:
     """Create and preprocess dataset"""
     logger.info("Starting dataset creation...")
@@ -50,7 +53,7 @@ def create_dataset(
 
     try:
         processor = Processor({}, conf=config_file)
-        processor.process_dataset()
+        processor.process_dataset(use_parallel=True, n_workers=n_workers)
         logger.info("Dataset creation completed successfully!")
     except Exception as e:
         logger.error(f"Dataset creation failed: {str(e)}")

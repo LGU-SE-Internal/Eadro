@@ -13,15 +13,144 @@ from pathlib import Path
 import polars as pl
 from tqdm import tqdm
 from .log import DrainProcessor
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 import pickle
 from loguru import logger
-import pytz
 from rcabench.openapi import InjectionApi, ApiClient, Configuration
 import random
 import time
+from .utils import fmap_processpool
+import functools
+from .log import preaggregate_logs
+from .trace import preaggregate_traces
+from .metric import preaggregate_metrics
+from .label import extract_eadro_labels, extract_rcabench_labels
+
+
+def process_datapack_parallel(
+    datapack: Path,
+    dataset: str,
+    sample_interval: int,
+    sample_step: int,
+    metadata: DatasetMetadata,
+    log_files: list[str],
+    metric_files: list[str],
+    trace_files: list[str],
+    drain_config_path: str = "drain.ini",
+    drain_save_path: str = "cache/drain/temp",
+) -> list[DataSample]:
+    from dynaconf import Dynaconf
+
+    config = Dynaconf(settings_files=["settings.toml"])
+    dataset_config = getattr(config, "datasets", {}).get(dataset, {})  # type: ignore
+
+    samples = []
+
+    if dataset == "rcabench":
+        (
+            normal_st,
+            normal_et,
+            abnormal_st,
+            abnormal_et,
+            gt_service,
+            fault_type,
+        ) = extract_rcabench_labels(datapack, dataset_config)
+    elif dataset == "sn" or dataset == "tt":
+        normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
+            extract_eadro_labels(datapack, dataset_config)
+        )
+
+    interval = sample_interval
+    sample_step = sample_step
+    assert isinstance(sample_step, int), "Sample step should be an integer."
+    assert interval is not None, (
+        f"Sample interval for {dataset} is not defined in the config."
+    )
+    assert isinstance(interval, int), "Sample interval should be an integer."
+
+    time_range = []
+    if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
+        1970, 1, 1, 0, 0, 0
+    ):
+        time_range.append((normal_st, normal_et, "", ""))
+    if abnormal_st != datetime(1970, 1, 1, 0, 0, 0) and abnormal_et != datetime(
+        1970, 1, 1, 0, 0, 0
+    ):
+        time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
+
+    def concat_and_cache_dfs(
+        files: list[str], start: datetime, end: datetime
+    ) -> pl.DataFrame:
+        lazy_frames = [
+            pl.scan_parquet(datapack / f).filter(
+                (pl.col("time") >= start) & (pl.col("time") <= end)
+            )
+            for f in files
+        ]
+        if not lazy_frames:
+            return pl.DataFrame()
+        return pl.concat(lazy_frames).collect()
+
+    for start, end, fault_type, gt_service in time_range:
+        # Cache all data for the current time range (normal/abnormal)
+        log_df_cached = concat_and_cache_dfs(log_files, start, end)
+        metric_df_cached = concat_and_cache_dfs(metric_files, start, end)
+        trace_df_cached = concat_and_cache_dfs(trace_files, start, end)
+        preaggregated_metrics = preaggregate_metrics(
+            metric_df_cached, start, end, metadata
+        )
+        preaggregated_traces = preaggregate_traces(
+            trace_df_cached, start, end, metadata
+        )
+        preaggregated_logs = preaggregate_logs(
+            log_df_cached,
+            start,
+            end,
+            metadata,
+            drain_config_path,
+            drain_save_path,
+        )
+
+        total_seconds = int((end - start).total_seconds())
+
+        for i in range(0, total_seconds - interval + 1, sample_step):
+            if i + interval > total_seconds:
+                break
+
+            sample = DataSample(
+                abnormal=gt_service != "",
+                gt_service=gt_service,
+                fault_type=fault_type,
+            )
+
+            # Direct slicing from pre-aggregated arrays (no repeated computation)
+            sample.metric = preaggregated_metrics[:, i : i + interval, :]
+            sample.trace = preaggregated_traces[:, i : i + interval, :]
+
+            # For logs, sum counts over the time window
+            log_counts_window = preaggregated_logs[:, i : i + interval, :]
+            sample.log = np.sum(log_counts_window, axis=1)  # Sum along time axis
+
+            # Validation
+            assert sample.metric.shape == (
+                len(metadata.services),
+                interval,
+                len(metadata.metric_names),
+            )
+            assert sample.trace.shape == (
+                len(metadata.services),
+                interval,
+                2,
+            )
+            assert sample.log.shape == (
+                len(metadata.services),
+                len(metadata.log_templates) + 1,
+            )
+
+            samples.append(sample)
+
+    return samples
 
 
 class Processor(DataProcessor):
@@ -40,7 +169,9 @@ class Processor(DataProcessor):
         assert isinstance(self.datapack_dir, str)
         assert self.datapack_dir != ""
         self.datapack_path = Path(self.datapack_dir)
-        assert self.datapack_path.exists()
+        assert self.datapack_path.exists(), (
+            f"Datapack path {self.datapack_path} does not exist."
+        )
         assert self.datapack_path.is_dir()
 
         pl.Config.set_streaming_chunk_size(50000)
@@ -116,34 +247,68 @@ class Processor(DataProcessor):
         )
         return sorted([self.datapack_path / name / "converted" for name in case_names])
 
-    def process_dataset(self):
-        """
-        1. create metadata: create_metadata
-        2. process each datapack: process_datapack (serial processing)
-           2.1 process log
-           2.2 process metrics
-           2.3 process traces
-           2.4 load ground truth (labels)
-        3. split to chunks(each chunk is the data within a certain time range, will be used for training/testing)
-        """
+    def process_dataset(self, use_parallel: bool = False, n_workers: int | None = None):
         self.derive_files()
-        self.datapacks = self._load_datapacks(self.dataset)[:5]
+        self.datapacks = self._load_datapacks(self.dataset)
+
         self.metadata = self.create_metadata()
 
-        samples: list[DataSample] = []
+        if use_parallel and len(self.datapacks) > 1:
+            # Parallel processing of datapacks using fmap_processpool
+            if n_workers is None:
+                n_workers = 16
 
-        # Serial processing of datapacks
-        for datapack in tqdm(self.datapacks, desc="Processing datapacks"):
-            try:
-                datapack_samples = self.process_datapack(datapack)
-                samples.extend(datapack_samples)
-            except Exception as e:
-                logger.error(f"Error processing datapack {datapack}: {e}")
-                raise
+            logger.info(
+                f"Processing {len(self.datapacks)} datapacks in parallel using {n_workers} workers with fmap_processpool"
+            )
 
-        with open(f".cache/{self.dataset}_samples.pkl", "wb") as f:
-            pickle.dump(samples, f)
-        return samples
+            # Type ignore to handle Dynaconf typing issues
+            sample_interval = int(self.config.sample_interval)  # type: ignore
+            sample_step = int(self.config.sample_step)  # type: ignore
+
+            tasks = [
+                functools.partial(
+                    process_datapack_parallel,
+                    dp,
+                    self.dataset,
+                    sample_interval,
+                    sample_step,
+                    self.metadata,
+                    self.log_files,
+                    self.metric_files,
+                    self.trace_files,
+                    "drain.ini",
+                    "cache/drain/temp",
+                )
+                for dp in self.datapacks
+            ]
+
+            for i in range(0, len(tasks), n_workers):
+                batch_tasks = tasks[i : i + n_workers]
+                logger.info(
+                    f"Processing batch {i // n_workers + 1}/{(len(tasks) + n_workers - 1) // n_workers} (datapacks {i + 1}-{min(i + n_workers, len(tasks))})"
+                )
+
+                batch_results = fmap_processpool(
+                    batch_tasks, parallel=n_workers, ignore_exceptions=False
+                )
+
+                batch_samples = []
+                for datapack_samples in batch_results:
+                    batch_samples.extend(datapack_samples)
+
+                batch_file = (
+                    f".cache/{self.dataset}_samples_batch_{i // n_workers + 1}.pkl"
+                )
+                Path(".cache").mkdir(exist_ok=True)
+                with open(batch_file, "wb") as f:
+                    pickle.dump(batch_samples, f)
+                logger.info(
+                    f"Saved batch {i // n_workers + 1} with {len(batch_samples)} samples to {batch_file}"
+                )
+
+                del batch_samples
+                del batch_results
 
     def derive_files(self):
         def load(f) -> list[str]:
@@ -399,606 +564,3 @@ class Processor(DataProcessor):
         metadata.to_pkl(f".cache/{self.dataset}_metadata.pkl")
         metadata.to_json(f".cache/{self.dataset}_metadata.json")
         return metadata
-
-    def extract_rcabench_labels(
-        self, datapack: Path
-    ) -> tuple[datetime, datetime, datetime, datetime, str, str]:
-        label_file = self.config.label_files  # type: ignore
-
-        assert label_file is not None, (
-            f"Label file for {self.dataset} is not defined in the config."
-        )
-        assert isinstance(label_file, list)
-        assert "injection.json" in label_file and "env.json" in label_file
-
-        with open(datapack / "injection.json", "r") as f:
-            injection = json.load(f)
-
-        assert (
-            injection is not None
-            and "ground_truth" in injection
-            and "service" in injection["ground_truth"]
-        ), f"Invalid injection file format in {datapack / 'injection.json'}."
-        gt_services = injection["ground_truth"]["service"]
-
-        assert "fault_type" in injection
-        fault_type = injection.get("fault_type")
-
-        with open(datapack / "env.json", "r") as f:
-            env = json.load(f)
-
-        assert (
-            "TIMEZONE" in env
-            and "NORMAL_START" in env
-            and "NORMAL_END" in env
-            and "ABNORMAL_START" in env
-            and "ABNORMAL_END" in env
-        ), f"Invalid env file format in {datapack / 'env.json'}."
-
-        normal_st = datetime.fromtimestamp(
-            int(env["NORMAL_START"]), pytz.UTC
-        ) - timedelta(hours=8)
-        normal_et = datetime.fromtimestamp(
-            int(env["NORMAL_END"]), pytz.UTC
-        ) - timedelta(hours=8)
-        abnormal_st = datetime.fromtimestamp(
-            int(env["ABNORMAL_START"]), pytz.UTC
-        ) - timedelta(hours=8)
-        abnormal_et = datetime.fromtimestamp(
-            int(env["ABNORMAL_END"]), pytz.UTC
-        ) - timedelta(hours=8)
-
-        return (
-            normal_st,
-            normal_et,
-            abnormal_st,
-            abnormal_et,
-            gt_services[0],
-            fault_type,
-        )
-
-    def extract_eadro_labels(
-        self, datapack: Path
-    ) -> tuple[datetime, datetime, datetime, datetime, str, str]:
-        label_file = self.config.label_files  # type: ignore
-
-        assert label_file is not None, (
-            f"Label file for {self.dataset} is not defined in the config."
-        )
-        assert isinstance(label_file, list), "Label file should be a string."
-        assert len(label_file) > 0, "No label file defined for datapack in the config."
-
-        label_file_path = datapack / label_file[0]
-
-        with open(label_file_path, "r") as f:
-            label = json.load(f)
-
-        assert isinstance(label, dict), "Label file should contain a dictionary."
-
-        gt_service = label.get("injection_name", "")
-        fault_type = label.get("fault_type", "")
-
-        normal_st = (
-            datetime.fromisoformat(label["normal_start_time"])
-            if label.get("normal_start_time")
-            else datetime(1970, 1, 1, 0, 0, 0)
-        )
-        normal_et = (
-            datetime.fromisoformat(label["normal_end_time"])
-            if label.get("normal_end_time")
-            else datetime(1970, 1, 1, 0, 0, 0)
-        )
-        abnormal_st = (
-            datetime.fromisoformat(label["fault_start_time"])
-            if label.get("fault_start_time")
-            else datetime(1970, 1, 1, 0, 0, 0)
-        )
-        abnormal_et = (
-            datetime.fromisoformat(label["fault_end_time"])
-            if label.get("fault_end_time")
-            else datetime(1970, 1, 1)
-        )
-
-        return normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type
-
-    def process_datapack(self, datapack: Path) -> list[DataSample]:
-        timings = {
-            "label_extraction": 0.0,
-            "initial_filtering_and_caching": 0.0,
-            "metric_processing": 0.0,
-            "log_processing": 0.0,
-            "trace_processing": 0.0,
-            "total_loop_time": 0.0,
-        }
-        samples = []
-
-        t_start = time.perf_counter()
-        if self.dataset == "rcabench":
-            (
-                normal_st,
-                normal_et,
-                abnormal_st,
-                abnormal_et,
-                gt_service,
-                fault_type,
-            ) = self.extract_rcabench_labels(datapack)
-        elif self.dataset == "sn" or self.dataset == "tt":
-            normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
-                self.extract_eadro_labels(datapack)
-            )
-        timings["label_extraction"] = time.perf_counter() - t_start
-
-        interval = self.config.sample_interval  # type: ignore
-        sample_step = self.config.sample_step  # type: ignore
-        assert isinstance(sample_step, int), "Sample step should be an integer."
-        assert interval is not None, (
-            f"Sample interval for {self.dataset} is not defined in the config."
-        )
-        assert isinstance(interval, int), "Sample interval should be an integer."
-
-        time_range = []
-        if normal_st != datetime(1970, 1, 1, 0, 0, 0) and normal_et != datetime(
-            1970, 1, 1, 0, 0, 0
-        ):
-            time_range.append((normal_st, normal_et, "", ""))
-        if abnormal_st != datetime(1970, 1, 1, 0, 0, 0) and abnormal_et != datetime(
-            1970, 1, 1, 0, 0, 0
-        ):
-            time_range.append((abnormal_st, abnormal_et, fault_type, gt_service))
-
-        def concat_and_cache_dfs(
-            files: list[str], start: datetime, end: datetime
-        ) -> pl.DataFrame:
-            """Scans, filters, and concatenates multiple parquet files into a single DataFrame."""
-            lazy_frames = [
-                pl.scan_parquet(datapack / f).filter(
-                    (pl.col("time") >= start) & (pl.col("time") <= end)
-                )
-                for f in files
-            ]
-            if not lazy_frames:
-                # Return an empty DataFrame with expected schema if no files
-                # This part might need adjustment if schemas differ or are unknown beforehand
-                return pl.DataFrame()
-            return pl.concat(lazy_frames).collect()
-
-        for start, end, fault_type, gt_service in time_range:
-            t_start_filter = time.perf_counter()
-
-            # Cache all data for the current time range (normal/abnormal)
-            log_df_cached = concat_and_cache_dfs(self.log_files, start, end)
-            metric_df_cached = concat_and_cache_dfs(self.metric_files, start, end)
-            trace_df_cached = concat_and_cache_dfs(self.trace_files, start, end)
-
-            timings["initial_filtering_and_caching"] += (
-                time.perf_counter() - t_start_filter
-            )
-
-            current_time = start
-            t_loop_start = time.perf_counter()
-            while current_time < end:
-                window_end_time = current_time + timedelta(seconds=interval)
-                if window_end_time > end:
-                    break
-
-                sample = DataSample(
-                    abnormal=gt_service != "",
-                    gt_service=gt_service,
-                    fault_type=fault_type,
-                )
-                # Initialize accumulator for metric data
-                t_metric_start = time.perf_counter()
-                metric_accumulator = np.zeros(
-                    (
-                        len(self.metadata.services),
-                        interval,
-                        len(self.metadata.metric_names),
-                    )
-                )
-
-                window_df = metric_df_cached.lazy().filter(
-                    (pl.col("time") >= current_time)
-                    & (pl.col("time") < window_end_time)
-                )
-                metric_result = self._process_metrics_from_df(
-                    window_df, current_time, window_end_time
-                )
-                metric_accumulator += metric_result
-                timings["metric_processing"] += time.perf_counter() - t_metric_start
-
-                sample.metric = metric_accumulator
-
-                assert sample.metric.shape == (
-                    len(self.metadata.services),
-                    interval,
-                    len(self.metadata.metric_names),
-                )
-                if np.all(sample.metric == 0):
-                    logger.warning(
-                        f"Sample at {current_time} to {window_end_time} has all zero metrics, skipping."
-                    )
-
-                # Initialize accumulator for log data
-                t_log_start = time.perf_counter()
-                log_accumulator = np.zeros(
-                    (
-                        len(self.metadata.services),
-                        len(self.metadata.log_templates) + 1,
-                    )
-                )
-
-                window_df = log_df_cached.lazy().filter(
-                    (pl.col("time") >= current_time)
-                    & (pl.col("time") < window_end_time)
-                )
-                log_result = self._process_log_from_df(
-                    window_df, current_time, window_end_time
-                )
-                log_accumulator += log_result
-                timings["log_processing"] += time.perf_counter() - t_log_start
-
-                sample.log = log_accumulator
-
-                assert sample.log.shape == (
-                    len(self.metadata.services),
-                    len(self.metadata.log_templates) + 1,
-                )
-                if np.all(sample.log == 0):
-                    logger.warning(
-                        f"Sample at {current_time} to {window_end_time} has all zero logs, skipping."
-                    )
-
-                # Initialize accumulator for trace data
-                t_trace_start = time.perf_counter()
-                trace_accumulator = np.zeros(
-                    (
-                        len(self.metadata.services),
-                        interval,
-                        2,
-                    )
-                )
-
-                window_df = trace_df_cached.lazy().filter(
-                    (pl.col("time") >= current_time)
-                    & (pl.col("time") < window_end_time)
-                )
-                trace_result = self._process_traces_from_df(
-                    window_df, current_time, window_end_time
-                )
-                trace_accumulator += trace_result
-                timings["trace_processing"] += time.perf_counter() - t_trace_start
-
-                sample.trace = trace_accumulator
-
-                assert sample.trace.shape == (
-                    len(self.metadata.services),
-                    interval,
-                    2,
-                )
-                if np.all(sample.trace == 0):
-                    logger.warning(
-                        f"Sample at {current_time} to {window_end_time} has all zero traces, skipping."
-                    )
-
-                samples.append(sample)
-                current_time += timedelta(seconds=sample_step)
-            timings["total_loop_time"] += time.perf_counter() - t_loop_start
-
-        logger.info(f"Timings for {datapack.name}: {timings}")
-        return samples
-
-    def _smooth_sparse_data(
-        self, data: np.ndarray, num_services: int, interval: int, num_features: int
-    ):
-        """
-        Smooth sparse time series data using forward fill and linear interpolation.
-
-        Args:
-            data: 3D array of shape (num_services, interval, num_features)
-            num_services: Number of services
-            interval: Number of time steps
-            num_features: Number of features
-        """
-        for service_id in range(num_services):
-            for feature_id in range(num_features):
-                # Get the time series for this service-feature combination
-                time_series = data[service_id, :, feature_id]
-
-                # Find non-zero indices (assuming zero means no data)
-                non_zero_indices = np.where(time_series != 0)[0]
-
-                if len(non_zero_indices) == 0:
-                    # No data points, keep as zeros
-                    continue
-                elif len(non_zero_indices) == 1:
-                    # Only one data point, forward fill
-                    single_value = time_series[non_zero_indices[0]]
-                    data[service_id, non_zero_indices[0] :, feature_id] = single_value
-                else:
-                    # Multiple data points, use linear interpolation
-                    for i in range(len(non_zero_indices) - 1):
-                        start_idx = non_zero_indices[i]
-                        end_idx = non_zero_indices[i + 1]
-                        start_val = time_series[start_idx]
-                        end_val = time_series[end_idx]
-
-                        # Linear interpolation between data points
-                        if end_idx - start_idx > 1:
-                            interpolated_values = np.linspace(
-                                start_val, end_val, end_idx - start_idx + 1
-                            )
-                            data[service_id, start_idx : end_idx + 1, feature_id] = (
-                                interpolated_values
-                            )
-
-                    # Forward fill from the last data point to the end
-                    last_idx = non_zero_indices[-1]
-                    last_val = time_series[last_idx]
-                    data[service_id, last_idx:, feature_id] = last_val
-
-                    # Backward fill from the first data point to the beginning
-                    first_idx = non_zero_indices[0]
-                    first_val = time_series[first_idx]
-                    data[service_id, : first_idx + 1, feature_id] = first_val
-
-    def _process_log_from_df(
-        self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
-    ) -> np.ndarray:
-        """Helper method to process log data from a pre-filtered DataFrame"""
-        num_services = len(self.metadata.services)
-        num_templates = len(self.metadata.log_templates) + 1  # +1 for unseen templates
-
-        # Collect data and check if empty
-        df_collected = df.select(["message", "service_name"]).collect()
-        if df_collected.height == 0:
-            result = np.zeros((num_services, num_templates))
-            assert result.shape == (num_services, num_templates), (
-                f"Expected log result shape ({num_services}, {num_templates}), "
-                f"got {result.shape}"
-            )
-            return result
-
-        # Batch process messages
-        messages = df_collected["message"].to_list()
-        templates = self.drain.process_batch(messages)
-
-        # Add template column
-        df_with_templates = df_collected.with_columns(pl.Series("template", templates))
-
-        result = np.zeros((num_services, num_templates))
-
-        # Calculate counts
-        counts = df_with_templates.group_by(["service_name", "template"]).agg(
-            pl.count().alias("count")
-        )
-
-        service_lookup = self.metadata.service_name_to_id
-        template_lookup = self.metadata.log_template_to_id
-
-        for row in counts.iter_rows(named=True):
-            service_name = row["service_name"]
-            template = row["template"]
-            count = row["count"]
-
-            service_id = service_lookup.get(service_name)
-            assert service_id is not None, "Service not found in metadata."
-            template_id = template_lookup.get(template, 0)
-            assert 0 <= template_id < num_templates, (
-                f"Template ID {template_id} out of bounds [0, {num_templates})"
-            )
-            result[service_id, template_id] += count
-
-        assert result.shape == (num_services, num_templates), (
-            f"Expected log result shape ({num_services}, {num_templates}), "
-            f"got {result.shape}"
-        )
-        return result
-
-    def _process_metrics_from_df(
-        self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
-    ) -> np.ndarray:
-        """Helper method to process metrics data from a pre-filtered DataFrame"""
-        interval = int(self.config.sample_interval)  # type: ignore
-        num_services = len(self.metadata.services)
-        num_metrics = len(self.metadata.metric_names)
-
-        # Calculate time buckets
-        window_duration = (end_time - start_time).total_seconds()
-        time_step_size = window_duration / interval if interval > 0 else 1.0
-
-        # Add time buckets and collect data
-        df_with_buckets = (
-            df.with_columns(
-                [
-                    ((pl.col("time") - start_time).dt.total_seconds() / time_step_size)
-                    .floor()
-                    .cast(pl.Int32)
-                    .alias("time_bucket")
-                ]
-            )
-            .filter((pl.col("time_bucket") >= 0) & (pl.col("time_bucket") < interval))
-            .collect()
-        )
-
-        if df_with_buckets.height == 0:
-            result = np.zeros((num_services, interval, num_metrics))
-            assert result.shape == (num_services, interval, num_metrics), (
-                f"Expected metrics result shape ({num_services}, {interval}, {num_metrics}), "
-                f"got {result.shape}"
-            )
-            return result
-
-        result = np.zeros((num_services, interval, num_metrics))
-
-        # Calculate statistics
-        metrics_stats = df_with_buckets.group_by(
-            ["service_name", "metric", "time_bucket"]
-        ).agg(pl.col("value").mean().alias("mean_value"))
-
-        service_lookup = self.metadata.service_name_to_id
-        metric_lookup = self.metadata.metric_name_to_id
-
-        for row in metrics_stats.iter_rows(named=True):
-            service_name = row["service_name"]
-            metric_name = row["metric"]
-            time_bucket = row["time_bucket"]
-            mean_value = row["mean_value"]
-
-            service_id = service_lookup.get(service_name)
-            metric_id = metric_lookup.get(metric_name)
-
-            assert service_id is not None and metric_id is not None, (
-                "Service or metric not found in metadata."
-            )
-            assert 0 <= time_bucket < interval, "Time bucket out of bounds."
-            metric_meta = self.metadata.metrics[metric_id]
-
-            assert (
-                metric_meta.max_value is not None or metric_meta.min_value is not None
-            )
-
-            value_range = metric_meta.max_value - metric_meta.min_value
-
-            if value_range < 0:
-                logger.warning(
-                    f"Metric {metric_name} for service {service_name} has invalid range: "
-                    f"max_value={metric_meta.max_value}, min_value={metric_meta.min_value}"
-                )
-
-            value_range += 1e-6  # Avoid division by zero
-
-            normalized_value = (mean_value - metric_meta.min_value) / value_range
-            result[service_id, time_bucket, metric_id] = normalized_value
-
-        self._smooth_sparse_data(result, num_services, interval, num_metrics)
-
-        assert result.shape == (num_services, interval, num_metrics), (
-            f"Expected metrics result shape ({num_services}, {interval, num_metrics}), "
-            f"got {result.shape}"
-        )
-        return result
-
-    def _process_traces_from_df(
-        self, df: pl.LazyFrame, start_time: datetime, end_time: datetime
-    ) -> np.ndarray:
-        interval = int(self.config.sample_interval)  # type: ignore
-        num_services = len(self.metadata.services)
-        expected_features = 2  # latency and invocation count
-
-        # Calculate time buckets
-        window_duration = (end_time - start_time).total_seconds()
-        time_step_size = window_duration / interval if interval > 0 else 1.0
-
-        # Add time buckets and collect data
-        df_with_buckets = (
-            df.with_columns(
-                [
-                    ((pl.col("time") - start_time).dt.total_seconds() / time_step_size)
-                    .floor()
-                    .cast(pl.Int32)
-                    .alias("time_bucket")
-                ]
-            )
-            .filter((pl.col("time_bucket") >= 0) & (pl.col("time_bucket") < interval))
-            .collect()
-        )
-
-        if df_with_buckets.height == 0:
-            result = np.zeros((num_services, interval, expected_features))
-            assert result.shape == (num_services, interval, expected_features), (
-                f"Expected traces result shape ({num_services}, {interval}, {expected_features}), "
-                f"got {result.shape}"
-            )
-            return result
-
-        result = np.zeros((num_services, interval, expected_features))
-
-        # Calculate latency and invocation statistics
-        trace_stats = df_with_buckets.group_by(["service_name", "time_bucket"]).agg(
-            [
-                pl.col("duration").mean().alias("avg_latency"),
-                pl.col("duration").count().alias("invocation_count"),
-            ]
-        )
-
-        service_lookup = self.metadata.service_name_to_id
-
-        for row in trace_stats.iter_rows(named=True):
-            service_name = row["service_name"]
-            time_bucket = row["time_bucket"]
-            avg_latency = row["avg_latency"]
-            invocation_count = row["invocation_count"]
-
-            service_id = service_lookup.get(service_name)
-            if service_id is not None and 0 <= time_bucket < interval:
-                result[service_id, time_bucket, 0] = (
-                    avg_latency if avg_latency is not None else 0.0
-                )
-                result[service_id, time_bucket, 1] = (
-                    invocation_count if invocation_count is not None else 0.0
-                )
-
-        # Data smoothing
-        self._smooth_sparse_data(result, num_services, interval, expected_features)
-
-        # Normalize latency using metadata statistics for each service
-        service_lookup = self.metadata.service_name_to_id
-
-        # Pre-compute service duration statistics for efficiency
-        service_duration_ranges = {}
-        for trace_meta in self.metadata.traces:
-            service_name = trace_meta.service_name
-            if service_name not in service_duration_ranges:
-                service_duration_ranges[service_name] = {
-                    "min": trace_meta.min_duration,
-                    "max": trace_meta.max_duration,
-                }
-            else:
-                # Update global min/max for this service
-                if trace_meta.min_duration is not None:
-                    if service_duration_ranges[service_name]["min"] is None:
-                        service_duration_ranges[service_name]["min"] = (
-                            trace_meta.min_duration
-                        )
-                    else:
-                        service_duration_ranges[service_name]["min"] = min(
-                            service_duration_ranges[service_name]["min"],
-                            trace_meta.min_duration,
-                        )
-
-                if trace_meta.max_duration is not None:
-                    if service_duration_ranges[service_name]["max"] is None:
-                        service_duration_ranges[service_name]["max"] = (
-                            trace_meta.max_duration
-                        )
-                    else:
-                        service_duration_ranges[service_name]["max"] = max(
-                            service_duration_ranges[service_name]["max"],
-                            trace_meta.max_duration,
-                        )
-
-        # Apply normalization for each service
-        for service_name, duration_range in service_duration_ranges.items():
-            service_id = service_lookup.get(service_name)
-            if service_id is not None:
-                global_min = duration_range["min"]
-                global_max = duration_range["max"]
-
-                if (
-                    global_min is not None
-                    and global_max is not None
-                    and global_max > global_min
-                ):
-                    service_latencies = result[service_id, :, 0]
-                    service_latencies = np.clip(
-                        service_latencies, global_min, global_max
-                    )
-                    result[service_id, :, 0] = (service_latencies - global_min) / (
-                        global_max - global_min
-                    )
-
-        assert result.shape == (num_services, interval, expected_features), (
-            f"Expected traces result shape ({num_services}, {interval}, {expected_features}), "
-            f"got {result.shape}"
-        )
-        return result

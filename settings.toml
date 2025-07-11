@@ -34,7 +34,7 @@ metric_files = [
 trace_files = ["abnormal_traces.parquet", "normal_traces.parquet"]
 label_files = ["injection.json", "env.json"]
 sample_interval = 20
-sample_step = 2
+sample_step = 10
 
 
 # Training configuration
@@ -43,7 +43,7 @@ random_seed = 42
 balance_train_set = true
 gpu = true
 device = "cuda"          # cuda, cpu, or auto
-epochs = 200
+epochs = 20
 batch_size = 256
 lr = 0.001
 patience = 200

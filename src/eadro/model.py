@@ -331,6 +331,22 @@ class MultiSourceEncoder(nn.Module):
         Returns:
             Fused graph-level representation [batch_size, feat_out_dim]
         """
+
+        # Assert that all three data sources exist and are not NaN
+        assert graph.ndata["traces"] is not None, "traces data is None"
+        assert graph.ndata["logs"] is not None, "logs data is None"
+        assert graph.ndata["metrics"] is not None, "metrics data is None"
+
+        assert not torch.isnan(graph.ndata["traces"]).any(), (
+            "traces data contains NaN values"
+        )
+        assert not torch.isnan(graph.ndata["logs"]).any(), (
+            "logs data contains NaN values"
+        )
+        assert not torch.isnan(graph.ndata["metrics"]).any(), (
+            "metrics data contains NaN values"
+        )
+
         trace_embedding = self.trace_model(
             graph.ndata["traces"]
         )  # [bz*node_num, trace_dim]
@@ -413,16 +429,6 @@ class MainModel(nn.Module):
         self.get_prob = nn.Softmax(dim=-1)
 
     def forward(self, graph: Any, ground_truth: torch.Tensor) -> Dict[str, Any]:
-        """
-        Forward pass
-
-        Args:
-            graph: DGL graph object
-            fault_indexs: Fault node indices [batch_size]
-
-        Returns:
-            Dictionary containing loss, predictions, and probabilities
-        """
         batch_size = graph.batch_size
         embeddings = self.encoder(graph)
 
