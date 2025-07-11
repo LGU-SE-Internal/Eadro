@@ -20,5 +20,13 @@
             "console": "integratedTerminal",
             "args": "train",
         },
+        {
+            "name": "inference",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "client.py",
+            "console": "integratedTerminal",
+            "args": "inference  result/exp_rcabench_20250711_113915/checkpoints/best_model.ckpt /mnt/jfs/rcabench_dataset/ts2-ts-travel2-service-response-delay-2drj9s/converted",
+        },
     ]
 }

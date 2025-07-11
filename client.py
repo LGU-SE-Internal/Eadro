@@ -6,6 +6,7 @@ Unified Eadro Client - Data preprocessing and training in one tool
 import typer
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 from loguru import logger
 from src.preprocessing.processor import Processor
 from src.exp.controller import UniversalExperimentManager
@@ -20,17 +21,6 @@ from src.eadro.handlers import (
 )
 from src.eadro.model import MainModel
 from src.eadro.utils import seed_everything
-import torch
-
-
-def get_device(config: Config) -> str:
-    """Get device based on configuration"""
-    use_gpu = config.get("training.gpu")
-    if use_gpu and torch.cuda.is_available():
-        logger.info("Using GPU...")
-        return "cuda"
-    logger.info("Using CPU...")
-    return "cpu"
 
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
@@ -77,9 +67,7 @@ def train(
     try:
         random_seed = config.get("training.random_seed")
         seed_everything(random_seed)
-
-        device = get_device(config)
-
+        device = "cuda" if config.get("training.gpu") else "cpu"
         model_handler = EadroModelHandler(device)
         data_handler = EadroDataHandler()
         training_handler = EadroTrainingHandler(device)
@@ -164,17 +152,10 @@ def pipeline(
 
 @app.command()
 def inference(
-    checkpoint_path: str = typer.Argument(
-        ..., help="Path to the model checkpoint file"
-    ),
-    datapack_path: str = typer.Argument(..., help="Path to the datapack directory"),
-    config_file: Optional[str] = typer.Option(
-        "settings.toml", "--config", help="Config file path"
-    ),
-    output_file: Optional[str] = typer.Option(
-        None, "--output", help="Output file path for inference results"
-    ),
-) -> None:
+    checkpoint_path: str,
+    datapack_path: Path,
+    config_file: Optional[str] = "settings.toml",
+) -> list:
     logger.info("Starting model inference...")
 
     if config_file is None:
@@ -186,92 +167,107 @@ def inference(
         if not checkpoint_path_obj.exists():
             raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
 
-        datapack_path_obj = Path(datapack_path)
+        datapack_path_obj = datapack_path
         if not datapack_path_obj.exists():
             raise FileNotFoundError(f"Datapack directory not found: {datapack_path}")
 
         random_seed = config.get("training.random_seed")
         seed_everything(random_seed)
 
-        device = get_device(config)
-
-        data_handler = EadroDataHandler()
-        inference_handler = EadroInferenceHandler(device)
+        processor = Processor({}, conf=config_file)
 
         dataset_name = datapack_path_obj.name
         config.set("dataset", dataset_name)
 
-        import shutil
+        processor.datapack_path = datapack_path_obj.parent
+        processor.datapacks = [datapack_path_obj]
+        processor.derive_files()
 
-        try:
-            samples_src = datapack_path_obj / f"{dataset_name}_samples.pkl"
-            metadata_src = datapack_path_obj / f"{dataset_name}_metadata.pkl"
+        logger.info("Creating metadata...")
+        metadata = processor.create_metadata()
 
-            if not samples_src.exists():
-                raise FileNotFoundError(
-                    f"Samples file not found in datapack: {samples_src}"
-                )
-            if not metadata_src.exists():
-                raise FileNotFoundError(
-                    f"Metadata file not found in datapack: {metadata_src}"
-                )
+        logger.info("Processing datapack to generate samples...")
+        from src.preprocessing.processor import process_datapack_parallel
 
-            cache_dir = Path(".cache")
-            cache_dir.mkdir(exist_ok=True)
+        dataset_config = processor.dataset_config
+        sample_interval = int(dataset_config.sample_interval)  # type: ignore
+        sample_step = int(dataset_config.sample_step)  # type: ignore
 
-            samples_dst = cache_dir / f"{dataset_name}_samples.pkl"
-            metadata_dst = cache_dir / f"{dataset_name}_metadata.pkl"
+        samples = process_datapack_parallel(
+            datapack_path_obj,
+            "rcabench",
+            sample_interval,
+            sample_step,
+            metadata,
+            processor.log_files,
+            processor.metric_files,
+            processor.trace_files,
+            "drain.ini",
+            "cache/drain/temp",
+        )
 
-            shutil.copy2(samples_src, samples_dst)
-            shutil.copy2(metadata_src, metadata_dst)
+        logger.info(f"Generated {len(samples)} samples for inference")
 
-            logger.info("Loading inference data...")
-            data = data_handler.prepare_data(config)
-            train_loader, test_loader, metadata = data
+        if not samples:
+            raise ValueError("No samples generated from the datapack")
 
-            config.set("node_num", len(metadata.services))
-            config.set("event_num", len(metadata.log_templates) + 1)
-            config.set("metric_num", len(metadata.metrics))
+        inference_handler = EadroInferenceHandler("cpu")
 
-            logger.info("Creating model...")
-            model = create_eadro_model(
-                event_num=config.get("event_num"),
-                metric_num=config.get("metric_num"),
-                node_num=config.get("node_num"),
-                device=device,
-                config=config,
-            )
+        from src.eadro.handlers import ChunkDataset, collate_fn
+        from torch.utils.data import DataLoader
 
-            logger.info(f"Loading model weights from {checkpoint_path}...")
-            checkpoint = torch.load(checkpoint_path, map_location=device)
-            model.load_state_dict(checkpoint["model_state_dict"])
-            model = model.to(device)
+        inference_dataset = ChunkDataset(samples, metadata)
+        batch_size = config.get("training.batch_size")
 
-            logger.info("Running inference...")
-            predictions = inference_handler.predict(model, data)
-            results = inference_handler.postprocess_results(predictions)
+        inference_loader = DataLoader(
+            inference_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            pin_memory=True,
+        )
+        device = "cuda" if config.get("training.gpu") else "cpu"
 
-            logger.info("Inference completed!")
-            logger.info(f"Total samples: {results['total_samples']}")
-            logger.info(f"Normal samples: {results['normal_samples']}")
-            logger.info(f"Anomaly samples: {results['anomaly_samples']}")
-            logger.info(f"Anomaly rate: {results['anomaly_rate']:.4f}")
+        config.set("node_num", len(metadata.services))
+        config.set("event_num", len(metadata.log_templates) + 1)
+        config.set("metric_num", len(metadata.metrics))
 
-            if output_file:
-                import json
+        logger.info("Creating model...")
+        model = create_eadro_model(
+            event_num=config.get("event_num"),
+            metric_num=config.get("metric_num"),
+            node_num=config.get("node_num"),
+            device=device,
+            config=config,
+        )
 
-                output_path = Path(output_file)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
+        model = model.to(device)
 
-                with open(output_path, "w") as f:
-                    json.dump(results, f, indent=2)
-                logger.info(f"Results saved to: {output_file}")
+        inference_experiment_name = f"inference_{datapack_path_obj.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        experiment_manager = UniversalExperimentManager[
+            MainModel, tuple, OptimizerAdapter
+        ](
+            config=config,
+            experiment_name=inference_experiment_name,
+            model_handler=EadroModelHandler(device),
+            data_handler=EadroDataHandler(),
+            training_handler=EadroTrainingHandler(device),
+            inference_handler=inference_handler,
+        )
 
-        finally:
-            if samples_dst.exists():
-                samples_dst.unlink()
-            if metadata_dst.exists():
-                metadata_dst.unlink()
+        data = (inference_loader, inference_loader, metadata)
+
+        results = experiment_manager.run_inference(
+            model=model,
+            data=data,
+            checkpoint_path=checkpoint_path,
+            load_best=False,
+            save_results=False,
+        )
+
+        logger.info(results)
+        assert "predictions" in results and isinstance(results["predictions"], list)
+        return results["predictions"]
 
     except Exception as e:
         logger.error(f"Inference failed: {str(e)}")

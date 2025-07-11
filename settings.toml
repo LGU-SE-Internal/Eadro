@@ -41,7 +41,7 @@ sample_step = 10
 [training]
 random_seed = 42
 balance_train_set = true
-gpu = true
+gpu = false
 device = "cuda"          # cuda, cpu, or auto
 epochs = 20
 batch_size = 256
@@ -119,8 +119,9 @@ primary_metric = "HR@1"
 [paths]
 data_root = "/mnt/jfs/rcabench-platform-v2/data/rcabench_filtered"
 result_dir = "result/"
-checkpoint_dir = "checkpoints"
 logs_dir = "logs"
 inference_dir = "inference"
 chunks_dir = "chunks/"
 cache_dir = ".cache/"
+metadata = "/mnt/jfs/experiment_storage/eadro/metadata"
+ckpt = "/mnt/jfs/experiment_storage/eadro/checkpoints"

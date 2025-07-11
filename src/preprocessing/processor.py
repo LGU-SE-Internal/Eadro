@@ -26,6 +26,8 @@ from .log import preaggregate_logs
 from .trace import preaggregate_traces
 from .metric import preaggregate_metrics
 from .label import extract_eadro_labels, extract_rcabench_labels
+import os
+from ..exp.config import Config
 
 
 def process_datapack_parallel(
@@ -155,17 +157,17 @@ def process_datapack_parallel(
 
 class Processor(DataProcessor):
     def __init__(self, parsers: dict[str, BaseParser], conf: str = "config.toml"):
-        config = self._load_config(conf)
-        self.dataset: str = config.dataset  # type: ignore
+        self.config = self._load_config(conf)
+        self.dataset: str = self.config.get("dataset")  # type: ignore
         assert self.dataset != "", "Dataset name cannot be empty."
-        self.config = config.datasets[config.dataset]  # type: ignore
+        self.dataset_config = self.config.get("datasets")[self.dataset]  # type: ignore
 
         self.parsers: dict[str, BaseParser] = parsers
         self.drain = DrainProcessor(conf="drain.ini", save_path="cache/drain/temp")
 
         self._file_cache = {}
 
-        self.datapack_dir = self.config.root_path  # type: ignore
+        self.datapack_dir = self.dataset_config.root_path  # type: ignore
         assert isinstance(self.datapack_dir, str)
         assert self.datapack_dir != ""
         self.datapack_path = Path(self.datapack_dir)
@@ -177,9 +179,9 @@ class Processor(DataProcessor):
         pl.Config.set_streaming_chunk_size(50000)
         pl.Config.set_tbl_rows(20)
 
-    def _load_config(self, config_path: str) -> Dynaconf:
+    def _load_config(self, config_path: str) -> Config:
         assert config_path != "", "Config path cannot be empty."
-        return Dynaconf(settings_files=[config_path])
+        return Config(config_file=Path(config_path))
 
     def _validate_datapack(self, pack: Path) -> bool:
         if not (pack.exists() and pack.is_dir()):
@@ -212,13 +214,13 @@ class Processor(DataProcessor):
 
     def _load_datapacks(self, dataset) -> list[Path]:
         packs = []
-        if self.config.load_method == "database":  # type: ignore
+        if self.dataset_config.load_method == "database":  # type: ignore
             packs = self._load_datapacks_from_db(dataset)
-        elif self.config.load_method == "all":  # type: ignore
+        elif self.dataset_config.load_method == "all":  # type: ignore
             packs = [dp for dp in self.datapack_path.iterdir() if dp.is_dir()]
         else:
             raise ValueError(
-                f"Unsupported load method: {self.config.load_method}. "  # type: ignore
+                f"Unsupported load method: {self.dataset_config.load_method}. "  # type: ignore
                 "Supported methods are 'database' and 'all'."
             )
 
@@ -263,8 +265,8 @@ class Processor(DataProcessor):
             )
 
             # Type ignore to handle Dynaconf typing issues
-            sample_interval = int(self.config.sample_interval)  # type: ignore
-            sample_step = int(self.config.sample_step)  # type: ignore
+            sample_interval = int(self.dataset_config.sample_interval)  # type: ignore
+            sample_step = int(self.dataset_config.sample_step)  # type: ignore
 
             tasks = [
                 functools.partial(
@@ -312,7 +314,7 @@ class Processor(DataProcessor):
 
     def derive_files(self):
         def load(f) -> list[str]:
-            files = self.config[f]  # type: ignore
+            files = self.dataset_config[f]  # type: ignore
             assert files is not None, (
                 f"Files for {self.dataset} are not defined in the config."
             )
@@ -325,7 +327,9 @@ class Processor(DataProcessor):
         self.trace_files = load("trace_files")
 
     def create_metadata(self) -> DatasetMetadata:
-        metadata = DatasetMetadata.from_pkl(f".cache/{self.dataset}_metadata.pkl")
+        metadata = DatasetMetadata.from_pkl(
+            f"{self.config.get('paths.metadata')}/{self.dataset}_metadata.pkl"
+        )
         if metadata is None:
             metadata = DatasetMetadata(
                 dataset_name=self.dataset,
@@ -561,6 +565,15 @@ class Processor(DataProcessor):
                 child_id = metadata.service_name_to_id[child_service_name]
                 metadata.service_calling_edges.append([parent_id, child_id])
 
-        metadata.to_pkl(f".cache/{self.dataset}_metadata.pkl")
-        metadata.to_json(f".cache/{self.dataset}_metadata.json")
+        metadata.to_pkl(
+            str(
+                Path(self.config.get("paths.metadata")) / f"{self.dataset}_metadata.pkl"
+            )
+        )
+        metadata.to_json(
+            str(
+                Path(self.config.get("paths.metadata"))
+                / f"{self.dataset}_metadata.json"
+            )
+        )
         return metadata

@@ -38,7 +38,6 @@ class CheckpointData(TypedDict):
     additional_data: Optional[ConfigDict]
 
 
-# Typed dictionary for better type safety
 class TrainingInfo(TypedDict):
     total_epochs: int
     training_time: float
@@ -238,8 +237,8 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         base_dir = Path(self.config.get("paths.result_dir"))
         self.experiment_dir: Path = base_dir / self.experiment_name
 
-        self.checkpoint_dir: Path = self.experiment_dir / self.config.get(
-            "paths.checkpoint_dir"
+        self.checkpoint_dir: Path = (
+            Path(self.config.get("paths.ckpt")) / self.experiment_name
         )
         self.logs_dir: Path = self.experiment_dir / self.config.get("paths.logs_dir")
         self.inference_dir: Path = self.experiment_dir / self.config.get(
@@ -367,7 +366,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             checkpoint_path = self.checkpoint_dir / f"checkpoint_epoch_{epoch:04d}.ckpt"
             torch.save(checkpoint_data, checkpoint_path)
             checkpoint_paths.append(str(checkpoint_path))
-            logger.debug(f"Saved checkpoint at epoch {epoch}: {checkpoint_path}")
+            logger.info(f"Saved checkpoint at epoch {epoch}: {checkpoint_path}")
 
         # Best checkpoint
         if is_best:
@@ -388,7 +387,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             self.metadata["best_metrics"] = metrics.copy()
             self.metadata["training_info"]["best_epoch"] = epoch
 
-            logger.debug(
+            logger.info(
                 f"Saved best checkpoint at epoch {epoch}: {best_checkpoint_path}"
             )
 
@@ -396,6 +395,9 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         latest_checkpoint_path = self.checkpoint_dir / "latest_model.ckpt"
         torch.save(checkpoint_data, latest_checkpoint_path)
         checkpoint_paths.append(str(latest_checkpoint_path))
+        logger.info(
+            f"Saved latest checkpoint at epoch {epoch}: {latest_checkpoint_path}"
+        )
 
         # Update checkpoint registry
         checkpoint_info: CheckpointInfo = {

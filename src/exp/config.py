@@ -11,9 +11,7 @@ class Config:
                 config_file / "settings.toml",
             ],
             environments=True,
-            env_switcher="ENV_FOR_DYNACONF",
             envvar_prefix="EADRO",
-            load_dotenv=True,
             merge_enabled=True,
         )
 

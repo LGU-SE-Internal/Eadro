@@ -202,12 +202,6 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
             logger.info(f"Total samples loaded from all batches: {len(all_samples)}")
 
-        elif single_file_path.exists():
-            # Fallback to single file for backward compatibility
-            logger.info("Loading from single samples file")
-            with open(single_file_path, "rb") as f:
-                all_samples = pickle.load(f)
-
         else:
             raise FileNotFoundError(
                 f"No sample files found. Expected either batch files matching '{batch_pattern}' "
@@ -503,8 +497,8 @@ class EadroInferenceHandler(
         self,
         model: MainModel,
         data: Tuple[DataLoader, DataLoader, DatasetMetadata],
-    ) -> torch.Tensor:
-        _, test_loader, _ = data
+    ) -> Dict:
+        _, test_loader, metadata = data
         model.eval()
 
         all_predictions = []
@@ -521,24 +515,28 @@ class EadroInferenceHandler(
                 all_predictions.extend(predictions)
                 all_probabilities.extend(probabilities)
 
-        return torch.tensor(all_predictions)
-
-    def postprocess_results(
-        self, predictions: torch.Tensor, **kwargs
-    ) -> PredictionResult:
-        predictions_list = predictions.tolist()
-
-        normal_count = sum(1 for pred in predictions_list if pred[0] == -1)
-        anomaly_count = len(predictions_list) - normal_count
-
         return {
-            "predictions": predictions_list,
-            "total_samples": len(predictions_list),
-            "normal_samples": normal_count,
-            "anomaly_samples": anomaly_count,
-            "anomaly_rate": anomaly_count / len(predictions_list)
-            if predictions_list
-            else 0.0,
+            "predictions": all_predictions,
+            "probabilities": all_probabilities,
+            "metadata": metadata,
+        }
+
+    def postprocess_results(self, predictions: Dict, **kwargs) -> PredictionResult:
+        predictions_list = predictions["predictions"]
+        probabilities_list = predictions["probabilities"]
+        metadata = predictions["metadata"]
+
+        cnt = Counter()
+        cnt.update([i[0] for i in predictions_list])
+
+        sorted_services = cnt.most_common(5)
+        final_service_list = [service_id for service_id, freq in sorted_services]
+
+        service_names = [
+            metadata.services[service_id].name for service_id in final_service_list
+        ]
+        return {
+            "predictions": service_names,
         }
 
 
@@ -552,5 +550,4 @@ def create_eadro_model(
         device=device,
         config=config,
     )
-    # Ensure the entire model is on the correct device
     return model.to(device)
