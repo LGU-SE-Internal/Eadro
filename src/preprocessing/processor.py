@@ -50,14 +50,18 @@ def process_datapack_parallel(
     samples = []
 
     if dataset == "rcabench":
-        (
-            normal_st,
-            normal_et,
-            abnormal_st,
-            abnormal_et,
-            gt_service,
-            fault_type,
-        ) = extract_rcabench_labels(datapack, dataset_config)
+        try:
+            (
+                normal_st,
+                normal_et,
+                abnormal_st,
+                abnormal_et,
+                gt_service,
+                fault_type,
+            ) = extract_rcabench_labels(datapack, dataset_config)
+        except Exception as e:
+            logger.error(f"Failed to extract labels for {datapack}: {e}")
+            return []
     elif dataset == "sn" or dataset == "tt":
         normal_st, normal_et, abnormal_st, abnormal_et, gt_service, fault_type = (
             extract_eadro_labels(datapack, dataset_config)

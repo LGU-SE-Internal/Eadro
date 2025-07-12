@@ -1,4 +1,4 @@
-from rcabench_platform.v2.cli.main import main
+from rcabench_platform.v2.online.run_exp_platform import run
 from rcabench_platform.v2.algorithms.spec import (
     global_algorithm_registry,
     Algorithm,
@@ -7,7 +7,6 @@ from rcabench_platform.v2.algorithms.spec import (
 )
 from client import inference
 import os
-from pathlib import Path
 
 
 class Eadro(Algorithm):
@@ -30,4 +29,4 @@ class Eadro(Algorithm):
 if __name__ == "__main__":
     registry = global_algorithm_registry()
     registry["eadro"] = Eadro
-    main(enable_builtin_algorithms=False)
+    run(enable_builtin_algorithms=False)

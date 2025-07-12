@@ -148,7 +148,7 @@ class CacheManager(Generic[T]):
                     f"Cache size {len(cache_dict)} exceeded limit {self.max_size}, truncated to {len(cache)} items"
                 )
 
-            logger.info(f"Loaded {len(cache)} items from cache: {self.cache_file}")
+            # logger.info(f"Loaded {len(cache)} items from cache: {self.cache_file}")
             return cache
         except (pickle.UnpicklingError, EOFError, Exception) as e:
             logger.warning(

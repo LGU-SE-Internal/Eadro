@@ -24,9 +24,13 @@ WORKDIR /app
 
 RUN uv python install 3.12
 
-COPY . . 
+COPY pyproject.toml . 
+COPY uv.lock . 
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+COPY . .
+# ENTRYPOINT ["bash", "entrypoint.sh"]

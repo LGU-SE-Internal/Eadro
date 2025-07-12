@@ -526,11 +526,27 @@ class EadroInferenceHandler(
         probabilities_list = predictions["probabilities"]
         metadata = predictions["metadata"]
 
-        cnt = Counter()
-        cnt.update([i[0] for i in predictions_list])
+        service_scores = defaultdict(float)
 
-        sorted_services = cnt.most_common(5)
-        final_service_list = [service_id for service_id, freq in sorted_services]
+        position_weights = [1.0, 0.8, 0.6, 0.4, 0.2]
+
+        for pred_list in predictions_list:
+            for position, service_id in enumerate(pred_list):
+                if position < len(position_weights):
+                    service_scores[service_id] += position_weights[position]
+
+        sorted_services = sorted(
+            service_scores.items(), key=lambda x: x[1], reverse=True
+        )
+        final_service_list = [service_id for service_id, score in sorted_services[:5]]
+
+        if len(final_service_list) < 5:
+            all_service_ids = set()
+            for pred_list in predictions_list:
+                all_service_ids.update(pred_list)
+
+            remaining_services = list(all_service_ids - set(final_service_list))
+            final_service_list.extend(remaining_services[: 5 - len(final_service_list)])
 
         service_names = [
             metadata.services[service_id].name for service_id in final_service_list

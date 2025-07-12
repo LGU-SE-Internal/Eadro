@@ -32,7 +32,7 @@ def create_dataset(
         "settings.toml", "--config", help="Config file path"
     ),
     n_workers: int = typer.Option(
-        2, "--workers", help="Number of parallel workers for dataset creation"
+        16, "--workers", help="Number of parallel workers for dataset creation"
     ),
 ) -> None:
     """Create and preprocess dataset"""
