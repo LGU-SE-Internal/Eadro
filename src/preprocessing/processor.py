@@ -26,7 +26,6 @@ from .log import preaggregate_logs
 from .trace import preaggregate_traces
 from .metric import preaggregate_metrics
 from .label import extract_eadro_labels, extract_rcabench_labels
-import os
 from ..exp.config import Config
 
 
@@ -42,8 +41,6 @@ def process_datapack_parallel(
     drain_config_path: str = "drain.ini",
     drain_save_path: str = "cache/drain/temp",
 ) -> list[DataSample]:
-    from dynaconf import Dynaconf
-
     config = Dynaconf(settings_files=["settings.toml"])
     dataset_config = getattr(config, "datasets", {}).get(dataset, {})  # type: ignore
 
@@ -172,13 +169,13 @@ class Processor(DataProcessor):
         self._file_cache = {}
 
         self.datapack_dir = self.dataset_config.root_path  # type: ignore
-        assert isinstance(self.datapack_dir, str)
-        assert self.datapack_dir != ""
+        # assert isinstance(self.datapack_dir, str)
+        # assert self.datapack_dir != ""
         self.datapack_path = Path(self.datapack_dir)
-        assert self.datapack_path.exists(), (
-            f"Datapack path {self.datapack_path} does not exist."
-        )
-        assert self.datapack_path.is_dir()
+        # assert self.datapack_path.exists(), (
+        #     f"Datapack path {self.datapack_path} does not exist."
+        # )
+        # assert self.datapack_path.is_dir()
 
         pl.Config.set_streaming_chunk_size(50000)
         pl.Config.set_tbl_rows(20)

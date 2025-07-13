@@ -8,10 +8,9 @@ class Config:
     def __init__(self, config_file: Path):
         self._settings = Dynaconf(
             settings_files=[
-                config_file / "settings.toml",
+                config_file,
             ],
             environments=True,
-            envvar_prefix="EADRO",
             merge_enabled=True,
         )
 
