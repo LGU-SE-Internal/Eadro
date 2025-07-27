@@ -22,8 +22,8 @@ sample_step = 2
 
 
 [datasets.rcabench]
-root_path = "/mnt/jfs/rcabench_dataset"
-load_method = "database"
+root_path = "data/rcabench-platform-v2/data"
+load_method = "all"
 log_files = ["abnormal_logs.parquet", "normal_logs.parquet"]
 metric_files = [
     "abnormal_metrics.parquet",
@@ -33,8 +33,8 @@ metric_files = [
 ]
 trace_files = ["abnormal_traces.parquet", "normal_traces.parquet"]
 label_files = ["injection.json", "env.json"]
-sample_interval = 20
-sample_step = 10
+sample_interval = 30
+sample_step = 30
 
 
 # Training configuration
@@ -43,10 +43,10 @@ random_seed = 42
 balance_train_set = true
 gpu = false
 device = "cuda"          # cuda, cpu, or auto
-epochs = 20
+epochs = 200
 batch_size = 256
 lr = 0.001
-patience = 200
+patience = 10
 train_ratio = 0.7
 evaluation_epoch = 10
 
@@ -67,7 +67,7 @@ log_dim = 16      # Log embedding dimension
 attn_head = 4     # Number of attention heads
 activation = 0.2  # LeakyReLU negative slope
 debug = false     # Debug mode
-chunk_length = 20
+chunk_length = 30
 
 # BaseModel specific parameters
 [model.base]

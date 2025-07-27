@@ -213,47 +213,66 @@ class Processor(DataProcessor):
 
         return True
 
-    def _load_datapacks(self, dataset) -> list[Path]:
-        packs = []
-        if self.dataset_config.load_method == "database":  # type: ignore
-            packs = self._load_datapacks_from_db(dataset)
-        elif self.dataset_config.load_method == "all":  # type: ignore
-            packs = [dp for dp in self.datapack_path.iterdir() if dp.is_dir()]
-        else:
-            raise ValueError(
-                f"Unsupported load method: {self.dataset_config.load_method}. "  # type: ignore
-                "Supported methods are 'database' and 'all'."
-            )
-
+    def _load_datapacks(self) -> list[Path]:
+        all_dirs = [dp for dp in self.datapack_path.iterdir() if dp.is_dir()]
         valid_packs = []
-        for pack in packs:
+        for pack in all_dirs:
             if self._validate_datapack(pack):
                 valid_packs.append(pack)
 
         if not valid_packs:
             raise ValueError("No valid datapacks found after validation.")
 
+        return valid_packs
+
+    def _load_datapacks_from_folder(self, dataset_folder: str) -> list[Path]:
+        """
+        从指定的数据集文件夹加载数据包
+        
+        Args:
+            dataset_folder: 数据集文件夹名称（如 __dev__rcabench_test_r1）
+        
+        Returns:
+            数据包路径列表
+        """
+        folder_path = self.datapack_path / dataset_folder
+        
+        if not folder_path.exists():
+            raise ValueError(f"Dataset folder '{dataset_folder}' not found at {folder_path}")
+        
+        if not folder_path.is_dir():
+            raise ValueError(f"'{dataset_folder}' is not a directory")
+        
+        # 收集该文件夹下的所有案例目录
+        case_dirs = [case_dp for case_dp in folder_path.iterdir() if case_dp.is_dir()]
+        
+        if not case_dirs:
+            raise ValueError(f"No case directories found in '{dataset_folder}'")
+        
+        valid_packs = []
+        for pack in case_dirs:
+            if self._validate_datapack(pack):
+                valid_packs.append(pack)
+
+        if not valid_packs:
+            raise ValueError(f"No valid datapacks found in '{dataset_folder}' after validation.")
+
         logger.info(
-            f"Loaded {len(valid_packs)} valid datapacks out of {len(packs)} total."
+            f"Loaded {len(valid_packs)} valid datapacks from folder '{dataset_folder}' out of {len(case_dirs)} total."
         )
         return valid_packs
 
-    def _load_datapacks_from_db(self, dataset: str) -> list[Path]:
-        config = Configuration(host="http://10.10.10.220:32080")
-        with ApiClient(configuration=config) as client:
-            api = InjectionApi(api_client=client)
-            resp = api.api_v1_injections_analysis_with_issues_get()
-
-        assert resp.data is not None, "No cases found in the response"
-        case_names = list(
-            set([item.injection_name for item in resp.data if item.injection_name])
-        )
-        return sorted([self.datapack_path / name / "converted" for name in case_names])
-
-    def process_dataset(self, use_parallel: bool = False, n_workers: int | None = None):
+    def process_dataset(self, use_parallel: bool = False, n_workers: int | None = None, split: str = "train"):
+        """
+        处理数据集
+        
+        Args:
+            use_parallel: 是否使用并行处理
+            n_workers: 工作进程数量
+            split: 数据集分割类型，可以是 "train" 或 "test"
+        """
         self.derive_files()
-        self.datapacks = self._load_datapacks(self.dataset)
-
+        self.datapacks = self._load_datapacks()
         self.metadata = self.create_metadata()
 
         if use_parallel and len(self.datapacks) > 1:
@@ -262,7 +281,7 @@ class Processor(DataProcessor):
                 n_workers = 16
 
             logger.info(
-                f"Processing {len(self.datapacks)} datapacks in parallel using {n_workers} workers with fmap_processpool"
+                f"Processing {len(self.datapacks)} {split} datapacks in parallel using {n_workers} workers with fmap_processpool"
             )
 
             # Type ignore to handle Dynaconf typing issues
@@ -289,7 +308,7 @@ class Processor(DataProcessor):
             for i in range(0, len(tasks), n_workers):
                 batch_tasks = tasks[i : i + n_workers]
                 logger.info(
-                    f"Processing batch {i // n_workers + 1}/{(len(tasks) + n_workers - 1) // n_workers} (datapacks {i + 1}-{min(i + n_workers, len(tasks))})"
+                    f"Processing {split} batch {i // n_workers + 1}/{(len(tasks) + n_workers - 1) // n_workers} (datapacks {i + 1}-{min(i + n_workers, len(tasks))})"
                 )
 
                 batch_results = fmap_processpool(
@@ -301,7 +320,84 @@ class Processor(DataProcessor):
                     batch_samples.extend(datapack_samples)
 
                 batch_file = (
-                    f".cache/{self.dataset}_samples_batch_{i // n_workers + 1}.pkl"
+                    f".cache/{self.dataset}_{split}_samples_batch_{i // n_workers + 1}.pkl"
+                )
+                Path(".cache").mkdir(exist_ok=True)
+                with open(batch_file, "wb") as f:
+                    pickle.dump(batch_samples, f)
+                logger.info(
+                    f"Saved {split} batch {i // n_workers + 1} with {len(batch_samples)} samples to {batch_file}"
+                )
+
+                del batch_samples
+                del batch_results
+
+    def process_dataset_folder(self, dataset_folder: str, label: str, use_parallel: bool = False, n_workers: int | None = None):
+        """
+        处理指定文件夹的数据集
+        
+        Args:
+            dataset_folder: 数据集文件夹名称（如 __dev__rcabench_test_r1）
+            label: 数据集标签（train 或 test）
+            use_parallel: 是否使用并行处理
+            n_workers: 工作进程数量
+        """
+        assert label in ["train", "test"], f"Label must be 'train' or 'test', got {label}"
+        
+        logger.info(f"Processing dataset folder: {dataset_folder} with label: {label}")
+        
+        self.derive_files()
+        self.datapacks = self._load_datapacks_from_folder(dataset_folder)
+        
+        self.metadata = self.create_metadata_for_folder(dataset_folder, label)
+
+        if use_parallel and len(self.datapacks) > 1:
+            # Parallel processing of datapacks using fmap_processpool
+            if n_workers is None:
+                n_workers = 16
+
+            logger.info(
+                f"Processing {len(self.datapacks)} datapacks from folder '{dataset_folder}' in parallel using {n_workers} workers with fmap_processpool"
+            )
+
+            # Type ignore to handle Dynaconf typing issues
+            sample_interval = int(self.dataset_config.sample_interval)  # type: ignore
+            sample_step = int(self.dataset_config.sample_step)  # type: ignore
+
+            tasks = [
+                functools.partial(
+                    process_datapack_parallel,
+                    dp,
+                    self.dataset,
+                    sample_interval,
+                    sample_step,
+                    self.metadata,
+                    self.log_files,
+                    self.metric_files,
+                    self.trace_files,
+                    "drain.ini",
+                    "cache/drain/temp",
+                )
+                for dp in self.datapacks
+            ]
+
+            for i in range(0, len(tasks), n_workers):
+                batch_tasks = tasks[i : i + n_workers]
+                logger.info(
+                    f"Processing batch {i // n_workers + 1}/{(len(tasks) + n_workers - 1) // n_workers} (datapacks {i + 1}-{min(i + n_workers, len(tasks))}) for folder '{dataset_folder}'"
+                )
+
+                batch_results = fmap_processpool(
+                    batch_tasks, parallel=n_workers, ignore_exceptions=False
+                )
+
+                batch_samples = []
+                for datapack_samples in batch_results:
+                    batch_samples.extend(datapack_samples)
+
+                # 使用包含数据集文件夹名称的文件名，避免覆盖
+                batch_file = (
+                    f".cache/{self.dataset}_{dataset_folder}_{label}_samples_batch_{i // n_workers + 1}.pkl"
                 )
                 Path(".cache").mkdir(exist_ok=True)
                 with open(batch_file, "wb") as f:
@@ -312,6 +408,7 @@ class Processor(DataProcessor):
 
                 del batch_samples
                 del batch_results
+                
 
     def derive_files(self):
         def load(f) -> list[str]:
@@ -578,3 +675,14 @@ class Processor(DataProcessor):
             )
         )
         return metadata
+
+    def create_metadata_for_folder(self, dataset_folder: str, label: str) -> DatasetMetadata:
+        if label == "train":
+            metadata = self.create_metadata()
+            
+            Path(".cache").mkdir(exist_ok=True)
+            metadata.to_pkl(f".cache/{self.dataset}_{dataset_folder}_train_metadata.pkl")
+            metadata.to_json(f".cache/{self.dataset}_{dataset_folder}_train_metadata.json")
+            return metadata
+        else:
+            return DatasetMetadata(dataset_name=self.dataset)

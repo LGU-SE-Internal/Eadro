@@ -176,74 +176,86 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
     def load_data(
         self,
         config: Config,
+        dataset_folder: str,
+        train_split: str = "train",
+        test_split: str = "test",
+        test_dataset_folder: Optional[str] = None,
     ) -> Tuple[List[DataSample], List[DataSample], DatasetMetadata]:
         dataset_name = config.get("dataset")
 
-        batch_pattern = f".cache/{dataset_name}_samples_batch_*.pkl"
-        batch_files = glob.glob(batch_pattern)
+        # 如果没有指定test_dataset_folder，则使用相同的dataset_folder
+        actual_test_folder = test_dataset_folder if test_dataset_folder is not None else dataset_folder
 
-        single_file_path = Path(f".cache/{dataset_name}_samples.pkl")
+        # 新格式：{dataset}_{dataset_folder}_{label}_samples_batch_*.pkl
+        train_batch_pattern = f".cache/{dataset_name}_{dataset_folder}_{train_split}_samples_batch_*.pkl"
+        test_batch_pattern = f".cache/{dataset_name}_{actual_test_folder}_{test_split}_samples_batch_*.pkl"
 
-        all_samples = []
+        # Load training data
+        train_batch_files = glob.glob(train_batch_pattern)
+        
+        # Load test data
+        test_batch_files = glob.glob(test_batch_pattern)
 
-        if batch_files:
-            # Load from batch files
-            logger.info(f"Found {len(batch_files)} batch files to load")
-            batch_files.sort()  # Ensure consistent ordering
+        # Load training samples
+        train_samples = []
+        if train_batch_files:
+            logger.info(f"Found {len(train_batch_files)} training batch files to load")
+            train_batch_files.sort()  # Ensure consistent ordering
 
-            for batch_file in batch_files:
-                logger.info(f"Loading batch file: {batch_file}")
+            for batch_file in train_batch_files:
+                logger.info(f"Loading training batch file: {batch_file}")
                 with open(batch_file, "rb") as f:
                     batch_samples = pickle.load(f)
-                    all_samples.extend(batch_samples)
+                    train_samples.extend(batch_samples)
                     logger.info(
-                        f"Loaded {len(batch_samples)} samples from {batch_file}"
+                        f"Loaded {len(batch_samples)} training samples from {batch_file}"
                     )
+            logger.info(f"Total training samples loaded: {len(train_samples)}")
+        
+        # Load test samples
+        test_samples = []
+        if test_batch_files:
+            logger.info(f"Found {len(test_batch_files)} test batch files to load")
+            test_batch_files.sort()  # Ensure consistent ordering
 
-            logger.info(f"Total samples loaded from all batches: {len(all_samples)}")
+            for batch_file in test_batch_files:
+                logger.info(f"Loading test batch file: {batch_file}")
+                with open(batch_file, "rb") as f:
+                    batch_samples = pickle.load(f)
+                    test_samples.extend(batch_samples)
+                    logger.info(
+                        f"Loaded {len(batch_samples)} test samples from {batch_file}"
+                    )
+            logger.info(f"Total test samples loaded: {len(test_samples)}")
 
-        else:
+        # Check if we have any data
+        if not train_samples and not test_samples:
             raise FileNotFoundError(
-                f"No sample files found. Expected either batch files matching '{batch_pattern}' "
-                f"or single file '{single_file_path}'"
+                f"No sample files found. Expected training files matching '{train_batch_pattern}' "
+                f"or test files matching '{test_batch_pattern}'"
             )
 
-        # Load metadata
-        metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
+        # Load metadata - 总是加载train的metadata（无论当前处理的是train还是test）
+        metadata_path = Path(f".cache/{dataset_name}_{dataset_folder}_train_metadata.pkl")
         if not metadata_path.exists():
-            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+            raise FileNotFoundError(
+                f"Metadata file not found: {metadata_path}. "
+                f"Please ensure you have processed the train dataset for folder '{dataset_folder}' first."
+            )
 
         metadata = DatasetMetadata.from_pkl(str(metadata_path))
         if metadata is None:
             raise ValueError(f"Failed to load metadata from {metadata_path}")
 
-        # Group samples by label (stratified sampling)
-        label_to_samples = defaultdict(list)
-        for sample in all_samples:
-            label = sample.get_gt_service_id(metadata.service_name_to_id)
-            label_to_samples[label].append(sample)
+        # Apply balancing to training set if requested
+        if config.get("training.balance_train_set") and train_samples:
+            # Group training samples by label
+            train_label_to_samples = defaultdict(list)
+            for sample in train_samples:
+                label = sample.get_gt_service_id(metadata.service_name_to_id)
+                train_label_to_samples[label].append(sample)
 
-        # Log label distribution before balancing
-        logger.info("Original label distribution:")
-        for label, samples in label_to_samples.items():
-            logger.info(f"Service {label}: {len(samples)} samples")
-
-        # Split each label's samples into train and test first
-        train_ratio = config.get("training.train_ratio")
-        train_label_to_samples = defaultdict(list)
-        test_samples = []
-
-        for label, samples in label_to_samples.items():
-            label_samples = samples.copy()
-            random.shuffle(label_samples)
-
-            # Split this label's samples
-            split_idx = int(len(label_samples) * train_ratio)
-            train_label_to_samples[label].extend(label_samples[:split_idx])
-            test_samples.extend(label_samples[split_idx:])
-
-        # Balance training set by finding minimum count and downsampling all labels
-        if config.get("training.balance_train_set"):
+            # Balance by finding minimum count and downsampling
             train_counts = [len(samples) for samples in train_label_to_samples.values()]
             if train_counts:
                 min_train_count = min(train_counts)
@@ -251,21 +263,14 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
                     f"Balancing training set to {min_train_count} samples per label"
                 )
 
-                train_samples = []
+                balanced_train_samples = []
                 for label, samples in train_label_to_samples.items():
-                    balanced_samples = samples[: min_train_count * 2]
-                    train_samples.extend(balanced_samples)
+                    balanced_samples = samples[: min_train_count * 20]
+                    balanced_train_samples.extend(balanced_samples)
                     logger.info(
                         f"Training set - Service {label}: {len(balanced_samples)} samples (original: {len(samples)})"
                     )
-            else:
-                train_samples = []
-        else:
-            train_samples = [
-                sample
-                for samples in train_label_to_samples.values()
-                for sample in samples
-            ]
+                train_samples = balanced_train_samples
 
         # Shuffle final train and test sets
         random.shuffle(train_samples)
@@ -305,10 +310,10 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         return train_samples, test_samples, metadata
 
     def prepare_data(
-        self, config: Config
+        self, config: Config, dataset_folder: str, train_split: str = "train", test_split: str = "test", test_dataset_folder: Optional[str] = None
     ) -> Tuple[DataLoader, DataLoader, DatasetMetadata]:
         # Load preprocessed samples and metadata
-        train_samples, test_samples, metadata = self.load_data(config)
+        train_samples, test_samples, metadata = self.load_data(config, dataset_folder, train_split, test_split, test_dataset_folder)
 
         # Create data loaders
         train_loader, test_loader = self.create_data_loaders(
@@ -475,8 +480,8 @@ class EadroTrainingHandler(
 
         # Calculate Hit Rate and NDCG metrics
         for j in [1, 3, 5]:
-            eval_results["HR@" + str(j)] = hrs[j - 1] * 1.0 / pos
-            eval_results["ndcg@" + str(j)] = ndcgs[j - 1] * 1.0 / pos
+            eval_results["HR@" + str(j)] = hrs[j - 1] * 1.0 / pos if pos > 0 else 0
+            eval_results["ndcg@" + str(j)] = ndcgs[j - 1] * 1.0 / pos if pos > 0 else 0
 
         return eval_results
 

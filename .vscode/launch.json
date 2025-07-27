@@ -18,7 +18,7 @@
             "request": "launch",
             "program": "client.py",
             "console": "integratedTerminal",
-            "args": "train",
+            "args": "train --dataset-folder __dev__rcabench_train_r1",
         },
         {
             "name": "inference",

@@ -34,6 +34,12 @@ def create_dataset(
     n_workers: int = typer.Option(
         16, "--workers", help="Number of parallel workers for dataset creation"
     ),
+    dataset_folder: str = typer.Option(
+        ..., "--dataset-folder", help="Specific dataset folder name (e.g., __dev__rcabench_test_r1)"
+    ),
+    label: Optional[str] = typer.Option(
+        None, "--label", help="Dataset label: train or test (auto-detect from folder name if not specified)"
+    ),
 ) -> None:
     """Create and preprocess dataset"""
     logger.info("Starting dataset creation...")
@@ -43,8 +49,28 @@ def create_dataset(
 
     try:
         processor = Processor({}, conf=config_file)
-        processor.process_dataset(use_parallel=True, n_workers=n_workers)
-        logger.info("Dataset creation completed successfully!")
+        
+        if label is None:
+            if "train" in dataset_folder.lower():
+                inferred_label = "train"
+            elif "test" in dataset_folder.lower():
+                inferred_label = "test"
+            else:
+                raise ValueError(f"Cannot auto-detect label from folder name '{dataset_folder}'. Please specify --label train or --label test")
+        else:
+            if label not in ["train", "test"]:
+                raise ValueError(f"Invalid label '{label}'. Must be 'train' or 'test'.")
+            inferred_label = label
+        
+        logger.info(f"Processing dataset folder: {dataset_folder} with label: {inferred_label}")
+        processor.process_dataset_folder(
+            dataset_folder=dataset_folder, 
+            label=inferred_label,
+            use_parallel=True, 
+            n_workers=n_workers
+        )
+        logger.info(f"Dataset creation completed for {dataset_folder}!")
+            
     except Exception as e:
         logger.error(f"Dataset creation failed: {str(e)}")
         raise
@@ -55,6 +81,12 @@ def train(
     config_file: Optional[str] = typer.Option(
         "settings.toml", "--config", help="Config file path"
     ),
+    dataset_folder: str = typer.Option(
+        ..., "--dataset-folder", help="Dataset folder name to use for training"
+    ),
+    test_dataset_folder: Optional[str] = typer.Option(
+        None, "--test-dataset-folder", help="Test dataset folder name (optional, defaults to same as train)"
+    ),
     experiment_name: Optional[str] = typer.Option(None, help="Experiment name"),
 ) -> None:
     """Train the model"""
@@ -63,6 +95,11 @@ def train(
     config = Config(Path(config_file))
 
     logger.info("Starting model training...")
+
+    # 显示数据集信息
+    actual_test_folder = test_dataset_folder if test_dataset_folder is not None else dataset_folder
+    logger.info(f"Training dataset folder: {dataset_folder}")
+    logger.info(f"Test dataset folder: {actual_test_folder}")
 
     try:
         random_seed = config.get("training.random_seed")
@@ -73,7 +110,8 @@ def train(
         training_handler = EadroTrainingHandler(device)
         inference_handler = EadroInferenceHandler(device)
 
-        data = data_handler.prepare_data(config)
+        # 指定数据集文件夹和使用训练集、测试集数据
+        data = data_handler.prepare_data(config, dataset_folder, train_split="train", test_split="test", test_dataset_folder=test_dataset_folder)
         train_loader, test_loader, metadata = data
 
         config.set("node_num", len(metadata.services))
@@ -130,6 +168,15 @@ def pipeline(
     config_file: Optional[str] = typer.Option(
         "settings.toml", "--config", help="Config file path"
     ),
+    dataset_folder: str = typer.Option(
+        ..., "--dataset-folder", help="Dataset folder name to use for the pipeline"
+    ),
+    test_dataset_folder: Optional[str] = typer.Option(
+        None, "--test-dataset-folder", help="Test dataset folder name (optional, defaults to same as train)"
+    ),
+    label: Optional[str] = typer.Option(
+        None, "--label", help="Dataset label: train or test (auto-detect from folder name if not specified)"
+    ),
     experiment_name: Optional[str] = typer.Option(None, help="Experiment name"),
     skip_dataset: bool = typer.Option(
         False, "--skip-dataset", help="Skip dataset creation step"
@@ -140,13 +187,39 @@ def pipeline(
 
     if not skip_dataset:
         logger.info("Step 1: Creating dataset...")
-        create_dataset(config_file)
-        logger.info("Dataset creation completed!")
+        try:
+            if config_file is None:
+                config_file = "settings.toml"
+            processor = Processor({}, conf=config_file)
+            
+            if label is None:
+                if "train" in dataset_folder.lower():
+                    inferred_label = "train"
+                elif "test" in dataset_folder.lower():
+                    inferred_label = "test"
+                else:
+                    raise ValueError(f"Cannot auto-detect label from folder name '{dataset_folder}'. Please specify --label train or --label test")
+            else:
+                if label not in ["train", "test"]:
+                    raise ValueError(f"Invalid label '{label}'. Must be 'train' or 'test'.")
+                inferred_label = label
+            
+            logger.info(f"Processing dataset folder: {dataset_folder} with label: {inferred_label}")
+            processor.process_dataset_folder(
+                dataset_folder=dataset_folder, 
+                label=inferred_label,
+                use_parallel=True, 
+                n_workers=16
+            )
+            logger.info("Dataset creation completed!")
+        except Exception as e:
+            logger.error(f"Dataset creation failed: {str(e)}")
+            raise
     else:
         logger.info("Skipping dataset creation step...")
 
     logger.info("Step 2: Training model...")
-    train(config_file, experiment_name)
+    train(config_file, dataset_folder, test_dataset_folder, experiment_name)
     logger.info("Pipeline completed successfully!")
 
 

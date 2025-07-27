@@ -487,8 +487,12 @@ class MainModel(nn.Module):
         for i in range(batch_size):
             if detect_logits is not None:
                 detect_pred = (
-                    detect_logits.detach().cpu().numpy().argmax(axis=1).squeeze()
+                    detect_logits.detach().cpu().numpy().argmax(axis=1)
                 )
+                # 确保detect_pred是1维数组，即使batch_size=1
+                if detect_pred.ndim == 0:
+                    detect_pred = np.array([detect_pred])
+                
                 if detect_pred[i] < 1:
                     y_pred.append([-1])  # Predicted as normal
                 else:
