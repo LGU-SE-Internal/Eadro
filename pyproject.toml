@@ -25,7 +25,8 @@ dependencies = [
     "ipykernel>=6.29.5",
     "pympler>=1.1",
     "dynaconf>=3.2.11",
-    "rcabench-platform>=0.2.13",
+    "rcabench-platform>=0.3.24",
+    "rcabench>=1.1.30",
 ]
 [tool.uv.sources]
 dgl = { url = "https://data.dgl.ai/wheels/torch-2.4/cu124/dgl-2.4.0%2Bcu124-cp312-cp312-manylinux1_x86_64.whl" }

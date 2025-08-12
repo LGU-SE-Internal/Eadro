@@ -1,15 +1,15 @@
-from rcabench_platform.v2.online.run_exp_platform import run
-
-# from rcabench_platform.v2.cli.main import main
-from rcabench_platform.v2.algorithms.spec import (
-    global_algorithm_registry,
-    Algorithm,
-    AlgorithmArgs,
-    AlgorithmAnswer,
-)
-from client import inference
 import os
 from pprint import pprint
+
+from rcabench_platform.v2.algorithms.spec import (
+    Algorithm,
+    AlgorithmAnswer,
+    AlgorithmArgs,
+    global_algorithm_registry,
+)
+from rcabench_platform.v2.online.run_exp_platform import run
+
+from client import inference_from_converted_datapack
 
 
 class Eadro(Algorithm):
@@ -19,10 +19,14 @@ class Eadro(Algorithm):
     def __call__(self, args: AlgorithmArgs) -> list[AlgorithmAnswer]:
         ckpt_path = os.environ["CHECKPOINT_PATH"]
         pprint(args)
-        results = inference(
+
+        # Use the inference function for converted datapacks
+        results = inference_from_converted_datapack(
             checkpoint_path=ckpt_path,
-            datapack_path=args.input_folder,
+            datapack_path=args.input_folder,  # This is the converted datapack path
         )
+
+        # Convert results to AlgorithmAnswer format
         answers = [
             AlgorithmAnswer(level="service", name=name, rank=i + 1)
             for i, name in enumerate(results)
@@ -34,4 +38,4 @@ if __name__ == "__main__":
     registry = global_algorithm_registry()
     registry["eadro"] = Eadro
     run(enable_builtin_algorithms=False)
-    # main(enable_builtin_algorithms=False)  # To run the CLI app if needed
+    run(enable_builtin_algorithms=False)

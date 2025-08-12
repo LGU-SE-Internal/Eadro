@@ -144,14 +144,7 @@ class PyTorchModelHandler(ModelHandler[torch.nn.Module]):
 
 
 class DataHandler(ABC, Generic[DataT]):
-    @abstractmethod
-    def prepare_data(self, config: Config) -> DataT:
-        pass
-
-    @abstractmethod
-    def get_data_info(self) -> ConfigDict:
-        """Get data information and statistics"""
-        pass
+    pass
 
 
 class TrainingHandler(ABC, Generic[ModelT, DataT, OptimizerT]):

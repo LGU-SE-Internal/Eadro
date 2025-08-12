@@ -2,32 +2,34 @@
 Handlers for integrating EADRO model with the universal experiment manager
 """
 
-import torch
-from torch.optim.adam import Adam
-import numpy as np
-from sklearn.metrics import ndcg_score
-from src.exp.controller import (
-    ModelHandler,
-    DataHandler,
-    TrainingHandler,
-    InferenceHandler,
-    MetricsDict,
-    ConfigDict,
-    PredictionResult,
-)
-from src.exp.config import Config
-from .model import MainModel
-from pathlib import Path
-from loguru import logger
-from typing import List, Optional, Tuple, Dict
-from torch.utils.data import Dataset, DataLoader
+import glob
+import pickle
 import random
 from collections import defaultdict
-from src.preprocessing.base import DataSample, DatasetMetadata
-from typing import Counter
-import pickle
+from pathlib import Path
+from typing import Counter, Dict, List, Optional, Tuple
+
 import dgl
-import glob
+import numpy as np
+import torch
+from loguru import logger
+from sklearn.metrics import ndcg_score
+from torch.optim.adam import Adam
+from torch.utils.data import DataLoader, Dataset
+
+from src.exp.config import Config
+from src.exp.controller import (
+    ConfigDict,
+    DataHandler,
+    InferenceHandler,
+    MetricsDict,
+    ModelHandler,
+    PredictionResult,
+    TrainingHandler,
+)
+from src.preprocessing.base import DataSample, DatasetMetadata
+
+from .model import MainModel
 
 
 def collate_fn(
@@ -184,15 +186,19 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         dataset_name = config.get("dataset")
 
         # 如果没有指定test_dataset_folder，则使用相同的dataset_folder
-        actual_test_folder = test_dataset_folder if test_dataset_folder is not None else dataset_folder
+        actual_test_folder = (
+            test_dataset_folder if test_dataset_folder is not None else dataset_folder
+        )
 
         # 新格式：{dataset}_{dataset_folder}_{label}_samples_batch_*.pkl
-        train_batch_pattern = f".cache/{dataset_name}_{dataset_folder}_{train_split}_samples_batch_*.pkl"
+        train_batch_pattern = (
+            f".cache/{dataset_name}_{dataset_folder}_{train_split}_samples_batch_*.pkl"
+        )
         test_batch_pattern = f".cache/{dataset_name}_{actual_test_folder}_{test_split}_samples_batch_*.pkl"
 
         # Load training data
         train_batch_files = glob.glob(train_batch_pattern)
-        
+
         # Load test data
         test_batch_files = glob.glob(test_batch_pattern)
 
@@ -211,7 +217,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
                         f"Loaded {len(batch_samples)} training samples from {batch_file}"
                     )
             logger.info(f"Total training samples loaded: {len(train_samples)}")
-        
+
         # Load test samples
         test_samples = []
         if test_batch_files:
@@ -236,7 +242,9 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
             )
 
         # Load metadata - 总是加载train的metadata（无论当前处理的是train还是test）
-        metadata_path = Path(f".cache/{dataset_name}_{dataset_folder}_train_metadata.pkl")
+        metadata_path = Path(
+            f".cache/{dataset_name}_{dataset_folder}_train_metadata.pkl"
+        )
         if not metadata_path.exists():
             raise FileNotFoundError(
                 f"Metadata file not found: {metadata_path}. "
@@ -309,22 +317,622 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
         return train_samples, test_samples, metadata
 
-    def prepare_data(
-        self, config: Config, dataset_folder: str, train_split: str = "train", test_split: str = "test", test_dataset_folder: Optional[str] = None
-    ) -> Tuple[DataLoader, DataLoader, DatasetMetadata]:
-        # Load preprocessed samples and metadata
-        train_samples, test_samples, metadata = self.load_data(config, dataset_folder, train_split, test_split, test_dataset_folder)
+    def load_data_by_dataset_id(
+        self,
+        config: Config,
+        dataset_id: int,
+        train_split: str = "train",
+        test_split: str = "test",
+    ) -> Tuple[List[DataSample], List[DataSample], DatasetMetadata]:
+        """
+        Load data using dataset ID from RCABench platform
 
-        # Create data loaders
-        train_loader, test_loader = self.create_data_loaders(
-            train_samples, test_samples, metadata, config
+        Args:
+            config: Configuration object
+            dataset_id: Dataset ID from RCABench platform
+            train_split: Training data split identifier
+            test_split: Test data split identifier
+
+        Returns:
+            Tuple of (train_samples, test_samples, metadata)
+        """
+        from rcabench.openapi import DatasetsApi
+        from rcabench_platform.v2.clients.rcabench_ import RCABenchClient
+        from rcabench_platform.v2.datasets.rcabench import valid
+        from rcabench_platform.v2.sources.convert import convert_datapack
+        from rcabench_platform.v2.sources.rcabench import RcabenchDatapackLoader
+
+        from src.preprocessing.processor import process_datapack_parallel
+
+        # Get dataset information from RCABench platform
+        with RCABenchClient() as client:
+            api = DatasetsApi(client)
+            resp = api.api_v2_datasets_id_get(id=dataset_id, include_injections=True)
+            assert resp.data is not None
+            assert resp.data.injections is not None
+
+        datapacks_injections = resp.data.injections
+        logger.info(
+            f"Found {len(datapacks_injections)} datapacks for dataset ID {dataset_id}"
+        )
+
+        dataset_name = config.get("dataset")
+        dataset_config = config.get("datasets.rcabench")
+
+        sample_interval = int(dataset_config.get("sample_interval", 30))
+        sample_step = int(dataset_config.get("sample_step", 30))
+        log_files = dataset_config.get("log_files", [])
+        metric_files = dataset_config.get("metric_files", [])
+        trace_files = dataset_config.get("trace_files", [])
+
+        # Process each datapack and collect samples
+        all_train_samples = []
+        all_test_samples = []
+        metadata = None
+
+        for datapack_info in datapacks_injections:
+            injection_name = datapack_info.injection_name
+
+            # Set up paths following the structure from your code
+            input_path = Path("data") / "rcabench_dataset" / injection_name
+            converted_input_path = input_path / "converted"
+
+            # Validate and convert if needed
+            _, _valid = valid(input_path)
+            if not _valid:
+                logger.warning(f"Skipping invalid datapack: {injection_name}")
+                continue
+
+            # Convert datapack if not already converted
+            convert_datapack(
+                loader=RcabenchDatapackLoader(
+                    src_folder=input_path, datapack=injection_name
+                ),
+                dst_folder=converted_input_path,
+                skip_finished=True,
+            )
+
+            # Create metadata from first valid datapack
+            if metadata is None:
+                from src.preprocessing.processor import Processor
+
+                processor = Processor({}, conf="settings.toml")
+                processor.datapacks = [converted_input_path]
+                processor.derive_files()
+                metadata = processor.create_metadata()
+                logger.info(f"Created metadata from datapack: {injection_name}")
+
+            # Process the converted datapack
+            samples = process_datapack_parallel(
+                converted_input_path,
+                dataset_name,
+                sample_interval,
+                sample_step,
+                metadata,
+                log_files,
+                metric_files,
+                trace_files,
+                "drain.ini",
+                "cache/drain/temp",
+            )
+
+            # Split samples based on abnormal flag or use split parameter
+            if train_split == "train" and test_split == "test":
+                # Split based on abnormal flag
+                train_samples = [s for s in samples if not s.abnormal]
+                test_samples = [s for s in samples if s.abnormal]
+            else:
+                # Use all samples for the specified split
+                if train_split == test_split:
+                    train_samples = samples
+                    test_samples = samples
+                else:
+                    train_samples = samples if train_split != "test" else []
+                    test_samples = samples if test_split != "train" else []
+
+            all_train_samples.extend(train_samples)
+            all_test_samples.extend(test_samples)
+
+            logger.info(
+                f"Processed {injection_name}: {len(train_samples)} train, {len(test_samples)} test samples"
+            )
+
+        if metadata is None:
+            raise ValueError(f"No valid datapacks found for dataset ID {dataset_id}")
+
+        logger.info(
+            f"Total samples for dataset ID {dataset_id}: {len(all_train_samples)} train, {len(all_test_samples)} test"
+        )
+
+        return all_train_samples, all_test_samples, metadata
+
+    def load_train_data_by_dataset_id(
+        self,
+        config: Config,
+        dataset_id: int,
+    ) -> Tuple[List[DataSample], DatasetMetadata]:
+        """
+        Load training data using dataset ID from RCABench platform
+
+        Args:
+            config: Configuration object
+            dataset_id: Dataset ID from RCABench platform for training
+
+        Returns:
+            Tuple of (train_samples, metadata)
+        """
+        from rcabench.openapi import DatasetsApi
+        from rcabench_platform.v2.clients.rcabench_ import RCABenchClient
+        from rcabench_platform.v2.datasets.rcabench import valid
+        from rcabench_platform.v2.sources.convert import convert_datapack
+        from rcabench_platform.v2.sources.rcabench import RcabenchDatapackLoader
+
+        from src.preprocessing.processor import process_datapack_parallel
+
+        # Get dataset information from RCABench platform
+        with RCABenchClient() as client:
+            api = DatasetsApi(client)
+            resp = api.api_v2_datasets_id_get(id=dataset_id, include_injections=True)
+            assert resp.data is not None
+            assert resp.data.injections is not None
+
+        datapacks_injections = resp.data.injections
+        logger.info(
+            f"Loading training data from dataset ID {dataset_id} with {len(datapacks_injections)} datapacks"
+        )
+
+        dataset_name = config.get("dataset")
+        dataset_config = config.get("datasets.rcabench")
+
+        sample_interval = int(dataset_config.get("sample_interval", 30))
+        sample_step = int(dataset_config.get("sample_step", 30))
+        log_files = dataset_config.get("log_files", [])
+        metric_files = dataset_config.get("metric_files", [])
+        trace_files = dataset_config.get("trace_files", [])
+
+        all_train_samples = []
+        metadata = None
+
+        for datapack_info in datapacks_injections:
+            injection_name = datapack_info.injection_name
+
+            # Set up paths following the structure from your code
+            input_path = Path("data") / "rcabench_dataset" / injection_name
+            converted_input_path = input_path / "converted"
+
+            # Validate and convert if needed
+            _, _valid = valid(input_path)
+            if not _valid:
+                logger.warning(f"Skipping invalid datapack: {injection_name}")
+                continue
+
+            # Convert datapack if not already converted
+            convert_datapack(
+                loader=RcabenchDatapackLoader(
+                    src_folder=input_path, datapack=injection_name
+                ),
+                dst_folder=converted_input_path,
+                skip_finished=True,
+            )
+
+            # Create metadata from first valid datapack
+            if metadata is None:
+                from src.preprocessing.processor import Processor
+
+                processor = Processor({}, conf="settings.toml")
+                processor.datapacks = [converted_input_path]
+                processor.derive_files()
+                metadata = processor.create_metadata()
+                logger.info(
+                    f"Created metadata from training datapack: {injection_name}"
+                )
+
+            # Process the converted datapack - use ALL samples for training
+            samples = process_datapack_parallel(
+                converted_input_path,
+                dataset_name,
+                sample_interval,
+                sample_step,
+                metadata,
+                log_files,
+                metric_files,
+                trace_files,
+                "drain.ini",
+                "cache/drain/temp",
+            )
+
+            all_train_samples.extend(samples)
+            logger.info(
+                f"Processed training datapack {injection_name}: {len(samples)} samples"
+            )
+
+        if metadata is None:
+            raise ValueError(
+                f"No valid datapacks found for training dataset ID {dataset_id}"
+            )
+
+        logger.info(
+            f"Total training samples from dataset ID {dataset_id}: {len(all_train_samples)}"
+        )
+        return all_train_samples, metadata
+
+    def load_test_data_by_dataset_id(
+        self,
+        config: Config,
+        dataset_id: int,
+        metadata: DatasetMetadata,
+    ) -> List[DataSample]:
+        """
+        Load test data using dataset ID from RCABench platform
+
+        Args:
+            config: Configuration object
+            dataset_id: Dataset ID from RCABench platform for testing
+            metadata: Metadata from training data
+
+        Returns:
+            List of test samples
+        """
+        from rcabench.openapi import DatasetsApi
+        from rcabench_platform.v2.clients.rcabench_ import RCABenchClient
+        from rcabench_platform.v2.datasets.rcabench import valid
+        from rcabench_platform.v2.sources.convert import convert_datapack
+        from rcabench_platform.v2.sources.rcabench import RcabenchDatapackLoader
+
+        from src.preprocessing.processor import process_datapack_parallel
+
+        # Get dataset information from RCABench platform
+        with RCABenchClient() as client:
+            api = DatasetsApi(client)
+            resp = api.api_v2_datasets_id_get(id=dataset_id, include_injections=True)
+            assert resp.data is not None
+            assert resp.data.injections is not None
+
+        datapacks_injections = resp.data.injections
+        logger.info(
+            f"Loading test data from dataset ID {dataset_id} with {len(datapacks_injections)} datapacks"
+        )
+
+        dataset_name = config.get("dataset")
+        dataset_config = config.get("datasets.rcabench")
+
+        sample_interval = int(dataset_config.get("sample_interval", 30))
+        sample_step = int(dataset_config.get("sample_step", 30))
+        log_files = dataset_config.get("log_files", [])
+        metric_files = dataset_config.get("metric_files", [])
+        trace_files = dataset_config.get("trace_files", [])
+
+        all_test_samples = []
+
+        for datapack_info in datapacks_injections:
+            injection_name = datapack_info.injection_name
+
+            # Set up paths following the structure from your code
+            input_path = Path("data") / "rcabench_dataset" / injection_name
+            converted_input_path = input_path / "converted"
+
+            # Validate and convert if needed
+            _, _valid = valid(input_path)
+            if not _valid:
+                logger.warning(f"Skipping invalid datapack: {injection_name}")
+                continue
+
+            # Convert datapack if not already converted
+            convert_datapack(
+                loader=RcabenchDatapackLoader(
+                    src_folder=input_path, datapack=injection_name
+                ),
+                dst_folder=converted_input_path,
+                skip_finished=True,
+            )
+
+            # Process the converted datapack - use ALL samples for testing
+            samples = process_datapack_parallel(
+                converted_input_path,
+                dataset_name,
+                sample_interval,
+                sample_step,
+                metadata,  # Use metadata from training
+                log_files,
+                metric_files,
+                trace_files,
+                "drain.ini",
+                "cache/drain/temp",
+            )
+
+            all_test_samples.extend(samples)
+            logger.info(
+                f"Processed test datapack {injection_name}: {len(samples)} samples"
+            )
+
+        logger.info(
+            f"Total test samples from dataset ID {dataset_id}: {len(all_test_samples)}"
+        )
+        return all_test_samples
+
+    def prepare_train_data_by_dataset_id(
+        self,
+        config: Config,
+        dataset_id: int,
+    ) -> Tuple[DataLoader, DataLoader, DatasetMetadata]:
+        """
+        Prepare training data using dataset ID from RCABench platform
+        Split into train and validation sets
+
+        Args:
+            config: Configuration object
+            dataset_id: Dataset ID from RCABench platform for training
+
+        Returns:
+            Tuple of (train_loader, val_loader, metadata)
+        """
+        # Load training samples from RCABench platform
+        train_samples, metadata = self.load_train_data_by_dataset_id(config, dataset_id)
+
+        # Split training data into train and validation
+        from src.eadro.handlers import EadroTrainingHandler
+
+        training_handler = EadroTrainingHandler(
+            "cpu"
+        )  # Device doesn't matter for splitting
+
+        val_ratio = config.get("training.validation_ratio", 0.1)
+        train_loader, val_loader = training_handler.split_train_data_for_validation(
+            train_samples, metadata, config, val_ratio
         )
 
         self.metadata = metadata
         self.train_loader = train_loader
-        self.test_loader = test_loader
+        self.test_loader = val_loader  # Use val_loader as test_loader for consistency
 
-        return train_loader, test_loader, metadata
+        return train_loader, val_loader, metadata
+
+    def prepare_test_data_by_dataset_id(
+        self,
+        config: Config,
+        dataset_id: int,
+        metadata: DatasetMetadata,
+    ) -> DataLoader:
+        """
+        Prepare test data using dataset ID from RCABench platform
+
+        Args:
+            config: Configuration object
+            dataset_id: Dataset ID from RCABench platform for testing
+            metadata: Metadata from training data
+
+        Returns:
+            Test data loader
+        """
+        # Load test samples from RCABench platform
+        test_samples = self.load_test_data_by_dataset_id(config, dataset_id, metadata)
+
+        # Create test dataset and loader
+        test_dataset = ChunkDataset(test_samples, metadata)
+        batch_size = config.get("training.batch_size")
+
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,  # Don't shuffle for testing
+            collate_fn=collate_fn,
+            pin_memory=True,
+        )
+
+        self.test_loader = test_loader
+        return test_loader
+
+    def load_single_datapack_for_inference(
+        self,
+        config: Config,
+        datapack_path: Path,
+        metadata: Optional[DatasetMetadata] = None,
+    ) -> Tuple[List[DataSample], DatasetMetadata]:
+        """
+        Load data from a single converted datapack for inference
+
+        Args:
+            config: Configuration object
+            datapack_path: Path to converted datapack
+            metadata: Optional pre-loaded metadata
+
+        Returns:
+            Tuple of (samples, metadata)
+        """
+        from src.preprocessing.processor import process_datapack_parallel
+
+        if not datapack_path.exists():
+            raise FileNotFoundError(f"Datapack directory not found: {datapack_path}")
+
+        dataset_name = config.get("dataset")
+        dataset_config = config.get("datasets.rcabench")
+
+        sample_interval = int(dataset_config.get("sample_interval", 30))
+        sample_step = int(dataset_config.get("sample_step", 30))
+        log_files = dataset_config.get("log_files", [])
+        metric_files = dataset_config.get("metric_files", [])
+        trace_files = dataset_config.get("trace_files", [])
+
+        # Create metadata if not provided
+        if metadata is None:
+            from src.preprocessing.processor import Processor
+
+            processor = Processor({}, conf="settings.toml")
+            processor.datapacks = [datapack_path]
+            processor.derive_files()
+            metadata = processor.create_metadata()
+            logger.info("Created new metadata from datapack")
+
+        # Process the datapack
+        samples = process_datapack_parallel(
+            datapack_path,
+            dataset_name,
+            sample_interval,
+            sample_step,
+            metadata,
+            log_files,
+            metric_files,
+            trace_files,
+            "drain.ini",
+            "cache/drain/temp",
+        )
+
+        logger.info(f"Generated {len(samples)} samples from {datapack_path}")
+        return samples, metadata
+
+    def prepare_data_for_single_inference(
+        self,
+        config: Config,
+        datapack_path: Path,
+        metadata: Optional[DatasetMetadata] = None,
+    ) -> Tuple[Optional[DataLoader], DataLoader, DatasetMetadata]:
+        """
+        Prepare data for inference on a single converted datapack
+
+        Args:
+            config: Configuration object
+            datapack_path: Path to converted datapack
+            metadata: Optional pre-loaded metadata
+
+        Returns:
+            Tuple of (None, test_loader, metadata)
+        """
+        samples, metadata = self.load_single_datapack_for_inference(
+            config, datapack_path, metadata
+        )
+
+        # Create dataset and loader
+        dataset = ChunkDataset(samples, metadata)
+        batch_size = config.get("training.batch_size")
+
+        test_loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            pin_memory=True,
+        )
+
+        self.metadata = metadata
+        self.test_loader = test_loader
+        self.train_loader = None
+
+        return None, test_loader, metadata
+
+    def load_data_from_converted_datapacks(
+        self,
+        config: Config,
+        datapack_paths: List[Path],
+        metadata: DatasetMetadata,
+        label: str = "test",
+    ) -> List[DataSample]:
+        """
+        Load data directly from converted datapack paths (for inference)
+
+        Args:
+            config: Configuration object
+            datapack_paths: List of converted datapack paths
+            metadata: Dataset metadata
+            label: Data label (train/test)
+
+        Returns:
+            List of data samples
+        """
+        from src.preprocessing.processor import process_datapack_parallel
+
+        dataset_name = config.get("dataset")
+        dataset_config = getattr(config, "datasets", {}).get(dataset_name, {})
+
+        sample_interval = int(dataset_config.get("sample_interval", 30))
+        sample_step = int(dataset_config.get("sample_step", 30))
+
+        log_files = dataset_config.get("log_files", [])
+        metric_files = dataset_config.get("metric_files", [])
+        trace_files = dataset_config.get("trace_files", [])
+
+        all_samples = []
+
+        for datapack_path in datapack_paths:
+            logger.info(f"Processing converted datapack: {datapack_path}")
+
+            # Process each datapack
+            samples = process_datapack_parallel(
+                datapack_path,
+                dataset_name,
+                sample_interval,
+                sample_step,
+                metadata,
+                log_files,
+                metric_files,
+                trace_files,
+                "drain.ini",
+                "cache/drain/temp",
+            )
+
+            all_samples.extend(samples)
+            logger.info(f"Loaded {len(samples)} samples from {datapack_path}")
+
+        logger.info(f"Total samples loaded: {len(all_samples)}")
+        return all_samples
+
+    def prepare_data_for_inference(
+        self,
+        config: Config,
+        datapack_paths: List[Path],
+        metadata: Optional[DatasetMetadata] = None,
+    ) -> Tuple[DataLoader, DataLoader, DatasetMetadata]:
+        """
+        Prepare data for inference using converted datapack paths
+
+        Args:
+            config: Configuration object
+            datapack_paths: List of converted datapack paths
+            metadata: Optional pre-loaded metadata
+
+        Returns:
+            Tuple of (train_loader, test_loader, metadata) - train_loader will be None
+        """
+        if metadata is None:
+            # Try to load metadata from cache or create new
+            dataset_name = config.get("dataset")
+            metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
+
+            if metadata_path.exists():
+                metadata = DatasetMetadata.from_pkl(str(metadata_path))
+                logger.info(f"Loaded metadata from {metadata_path}")
+            else:
+                # Create metadata from the datapacks
+                from src.preprocessing.processor import Processor
+
+                processor = Processor({}, conf="settings.toml")
+                processor.datapacks = list(datapack_paths)
+                processor.derive_files()
+                metadata = processor.create_metadata()
+                logger.info("Created new metadata from datapacks")
+
+        # Load samples from converted datapacks
+        samples = self.load_data_from_converted_datapacks(
+            config, datapack_paths, metadata, "test"
+        )
+
+        # Create dataset and loader
+        dataset = ChunkDataset(samples, metadata)
+        batch_size = config.get("training.batch_size")
+
+        test_loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            pin_memory=True,
+        )
+
+        self.metadata = metadata
+        self.test_loader = test_loader
+        # No training data for inference
+        self.train_loader = None
+
+        return None, test_loader, metadata
 
     def get_data_info(self) -> ConfigDict:
         """Get information about the dataset"""
@@ -398,6 +1006,63 @@ class EadroTrainingHandler(
 
     def __init__(self, device: str):
         self.device = device
+        self.best_val_loss = float("inf")
+        self.patience_counter = 0
+
+    def split_train_data_for_validation(
+        self,
+        train_samples: List[DataSample],
+        metadata: DatasetMetadata,
+        config: Config,
+        val_ratio: float = 0.1,
+    ) -> Tuple[DataLoader, DataLoader]:
+        """
+        Split training data into train and validation sets
+
+        Args:
+            train_samples: All training samples
+            metadata: Dataset metadata
+            config: Configuration object
+            val_ratio: Ratio of data to use for validation
+
+        Returns:
+            Tuple of (train_loader, val_loader)
+        """
+        # Shuffle samples before splitting
+        random.shuffle(train_samples)
+
+        # Split data
+        val_size = int(len(train_samples) * val_ratio)
+        val_samples = train_samples[:val_size]
+        train_samples = train_samples[val_size:]
+
+        logger.info(
+            f"Split data: {len(train_samples)} train samples, {len(val_samples)} validation samples"
+        )
+
+        # Create datasets and loaders
+        train_dataset = ChunkDataset(train_samples, metadata)
+        val_dataset = ChunkDataset(val_samples, metadata)
+
+        batch_size = config.get("training.batch_size")
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=collate_fn,
+            pin_memory=True,
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            pin_memory=True,
+        )
+
+        return train_loader, val_loader
 
     def train_epoch(
         self,
@@ -437,14 +1102,15 @@ class EadroTrainingHandler(
         data: Tuple[DataLoader, DataLoader, DatasetMetadata],
         **kwargs,
     ) -> MetricsDict:
-        _, test_loader, _ = data
+        """Validate model and return metrics including validation loss"""
+        _, val_loader, _ = data
         model.eval()
         hrs, ndcgs = np.zeros(5), np.zeros(5)
         TP, FP, FN = 0, 0, 0
         batch_cnt, epoch_loss = 0, 0.0
 
         with torch.no_grad():
-            for graph, ground_truths in test_loader:
+            for graph, ground_truths in val_loader:
                 res = model.forward(
                     graph.to(self.device), ground_truths.to(self.device)
                 )
@@ -471,8 +1137,11 @@ class EadroTrainingHandler(
                 epoch_loss += res["loss"].item()
                 batch_cnt += 1
 
+        avg_val_loss = epoch_loss / batch_cnt if batch_cnt > 0 else 0.0
         pos = TP + FN  # Total number of positive samples
+
         eval_results = {
+            "val_loss": avg_val_loss,
             "F1": TP * 2.0 / (TP + FP + pos) if (TP + FP + pos) > 0 else 0,
             "Rec": TP * 1.0 / pos if pos > 0 else 0,  # Recall
             "Pre": TP * 1.0 / (TP + FP) if (TP + FP) > 0 else 0,  # Precision
@@ -484,6 +1153,42 @@ class EadroTrainingHandler(
             eval_results["ndcg@" + str(j)] = ndcgs[j - 1] * 1.0 / pos if pos > 0 else 0
 
         return eval_results
+
+    def should_stop_early(self, val_metrics: MetricsDict, config: Config) -> bool:
+        """
+        Check if training should stop early based on validation loss
+
+        Args:
+            val_metrics: Validation metrics including val_loss
+            config: Configuration object
+
+        Returns:
+            True if training should stop
+        """
+        patience = config.get("training.patience", 10)
+        min_delta = config.get("training.min_delta", 1e-4)
+
+        current_val_loss = val_metrics.get("val_loss", float("inf"))
+
+        # Check if validation loss improved
+        if current_val_loss < self.best_val_loss - min_delta:
+            self.best_val_loss = current_val_loss
+            self.patience_counter = 0
+            logger.info(f"Validation loss improved to {current_val_loss:.6f}")
+            return False
+        else:
+            self.patience_counter += 1
+            logger.info(
+                f"Validation loss did not improve. Patience: {self.patience_counter}/{patience}"
+            )
+
+            if self.patience_counter >= patience:
+                logger.info(
+                    f"Early stopping triggered. Best validation loss: {self.best_val_loss:.6f}"
+                )
+                return True
+
+            return False
 
     def setup_optimizer(self, model: MainModel, config: Config) -> OptimizerAdapter:
         """Setup optimizer for training"""
@@ -503,14 +1208,20 @@ class EadroInferenceHandler(
         model: MainModel,
         data: Tuple[DataLoader, DataLoader, DatasetMetadata],
     ) -> Dict:
-        _, test_loader, metadata = data
+        # Use test_loader if available, otherwise use train_loader for inference
+        train_loader, test_loader, metadata = data
+        inference_loader = test_loader if test_loader is not None else train_loader
+
+        if inference_loader is None:
+            raise ValueError("No data loader available for inference")
+
         model.eval()
 
         all_predictions = []
         all_probabilities = []
 
         with torch.no_grad():
-            for graph, ground_truths in test_loader:
+            for graph, ground_truths in inference_loader:
                 result = model.forward(
                     graph.to(self.device), ground_truths.to(self.device)
                 )
@@ -525,6 +1236,38 @@ class EadroInferenceHandler(
             "probabilities": all_probabilities,
             "metadata": metadata,
         }
+
+    def predict_from_datapacks(
+        self,
+        model: MainModel,
+        config: Config,
+        datapack_paths: List[Path],
+        metadata: Optional[DatasetMetadata] = None,
+    ) -> Dict:
+        """
+        Direct prediction from converted datapack paths
+
+        Args:
+            model: Trained model
+            config: Configuration object
+            datapack_paths: List of converted datapack paths
+            metadata: Optional pre-loaded metadata
+
+        Returns:
+            Dictionary containing predictions and probabilities
+        """
+        from src.eadro.handlers import EadroDataHandler
+
+        data_handler = EadroDataHandler()
+
+        # Prepare data for inference
+        _, test_loader, metadata = data_handler.prepare_data_for_inference(
+            config, datapack_paths, metadata
+        )
+
+        # Run prediction
+        data = (None, test_loader, metadata)
+        return self.predict(model, data)
 
     def postprocess_results(self, predictions: Dict, **kwargs) -> PredictionResult:
         predictions_list = predictions["predictions"]
@@ -559,6 +1302,36 @@ class EadroInferenceHandler(
         return {
             "predictions": service_names,
         }
+
+    def predict_from_single_datapack(
+        self,
+        model: MainModel,
+        config: Config,
+        datapack_path: Path,
+        metadata: Optional[DatasetMetadata] = None,
+    ) -> Dict:
+        """
+        Direct prediction from a single converted datapack path
+
+        Args:
+            model: Trained model
+            config: Configuration object
+            datapack_path: Path to converted datapack
+            metadata: Optional pre-loaded metadata
+
+        Returns:
+            Dictionary containing predictions and probabilities
+        """
+        data_handler = EadroDataHandler()
+
+        # Prepare data for inference
+        _, test_loader, metadata = data_handler.prepare_data_for_single_inference(
+            config, datapack_path, metadata
+        )
+
+        # Run prediction
+        data = (None, test_loader, metadata)
+        return self.predict(model, data)
 
 
 def create_eadro_model(

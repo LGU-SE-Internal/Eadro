@@ -22,11 +22,15 @@ class Config:
             for key in additional_settings.keys():  # type: ignore
                 self._settings.set(key, additional_settings.get(key))  # type: ignore
 
-    def get(self, key: str):
+    def get(self, key: str, default: Optional[Any] = None) -> Any:
         res = self._settings.get(key, None)  # type: ignore
-        assert res is not None, f"Configuration key '{key}' not found"
-        return res
-
+        if res is not None:
+            return res
+        else:
+            if default is not None:
+                return default
+            else:
+                raise KeyError(f"Key '{key}' not found in configuration. and no default provided.")
     def set(self, key: str, value: Any):
         self._settings.set(key, value)  # type: ignore
 
