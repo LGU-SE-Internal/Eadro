@@ -403,7 +403,7 @@ def inference(
 
         samples = process_datapack_parallel(
             datapack_path_obj,
-            "rcabench",
+            dataset_name,
             sample_interval,
             sample_step,
             metadata,
@@ -566,6 +566,11 @@ def train_by_id(
 
         model = model.to(device)
 
+        # 使用带dataset_id的实验名称
+        if experiment_name is None:
+            experiment_name = f"train_dataset_{dataset_id}"
+
+        # Create experiment manager
         experiment_manager = UniversalExperimentManager[
             MainModel, tuple, OptimizerAdapter
         ](
@@ -580,40 +585,38 @@ def train_by_id(
         optimizer = training_handler.setup_optimizer(model, config)
         num_epochs = config.get("training.epochs")
 
-        # Create data tuple for training with validation
-        data = (train_loader, val_loader, metadata)
+        # Create SEPARATE data tuples for training and validation
+        train_data = (
+            train_loader,
+            val_loader,
+            metadata,
+        )  # Training handler will use train_loader
+        val_data = (
+            train_loader,
+            val_loader,
+            metadata,
+        )  # Training handler will use val_loader
 
-        # Training with early stopping
-        best_metrics = {}
-        for epoch in range(num_epochs):
-            # Train one epoch
-            train_metrics = training_handler.train_epoch(model, data, optimizer)
+        training_results = experiment_manager.run_training(
+            model=model,
+            train_data=train_data,
+            val_data=val_data,  # Now validation will be performed correctly
+            optimizer=optimizer,
+            num_epochs=num_epochs,
+        )
 
-            # Validate every few epochs or at the end
-            if (
-                epoch % config.get("training.validation_frequency", 1) == 0
-                or epoch == num_epochs - 1
-            ):
-                val_metrics = training_handler.validate(model, data)
+        logger.info(f"Training completed. Results: {training_results}")
 
-                logger.info(
-                    f"Epoch {epoch + 1}/{num_epochs} - "
-                    f"Train Loss: {train_metrics['train_loss']:.6f}, "
-                    f"Val Loss: {val_metrics['val_loss']:.6f}, "
-                    f"HR@1: {val_metrics.get('HR@1', 0):.4f}"
-                )
+        # 获取实验总结
+        summary = experiment_manager.get_experiment_summary()
+        logger.info(f"Experiment summary: {summary}")
 
-                # Check for early stopping
-                if training_handler.should_stop_early(val_metrics, config):
-                    logger.info(f"Early stopping at epoch {epoch + 1}")
-                    break
+        # 获取保存的checkpoint路径
+        best_checkpoint_path = experiment_manager.checkpoint_dir / "best_model.ckpt"
+        latest_checkpoint_path = experiment_manager.checkpoint_dir / "latest_model.ckpt"
 
-                # Save best metrics
-                if val_metrics["val_loss"] < best_metrics.get("val_loss", float("inf")):
-                    best_metrics = val_metrics.copy()
-                    best_metrics.update(train_metrics)
-
-        logger.info(f"Training completed. Best metrics: {best_metrics}")
+        logger.info(f"Best checkpoint saved at: {best_checkpoint_path}")
+        logger.info(f"Latest checkpoint saved at: {latest_checkpoint_path}")
 
     except Exception as e:
         logger.error(f"Training failed: {str(e)}")
@@ -627,18 +630,15 @@ def test_by_id(
     ),
     train_dataset_id: int = typer.Option(
         ...,
-        "--train-dataset-id", 
-        help="Dataset ID that was used for training (for metadata compatibility)"
-    ),
-    checkpoint_path: str = typer.Option(
-        ..., "--checkpoint", help="Path to trained model checkpoint"
+        "--train-dataset-id",
+        help="Dataset ID that was used for training (for metadata and best checkpoint)",
     ),
     config_file: Optional[str] = typer.Option(
         "settings.toml", "--config", help="Config file path"
     ),
     experiment_name: Optional[str] = typer.Option(None, help="Test experiment name"),
 ) -> None:
-    """Test the model using dataset IDs (automatically labeled as test data)"""
+    """Test the model using dataset IDs - automatically uses best checkpoint from training"""
     if config_file is None:
         config_file = "settings.toml"
     config = Config(Path(config_file))
@@ -646,13 +646,8 @@ def test_by_id(
     logger.info("Starting model testing...")
     logger.info(f"Test dataset ID: {test_dataset_id}")
     logger.info(f"Train dataset ID (for metadata): {train_dataset_id}")
-    logger.info(f"Using checkpoint: {checkpoint_path}")
 
     try:
-        checkpoint_path_obj = Path(checkpoint_path)
-        if not checkpoint_path_obj.exists():
-            raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
-
         random_seed = config.get("training.random_seed")
         seed_everything(random_seed)
         device = "cuda" if config.get("training.gpu") else "cpu"
@@ -662,16 +657,10 @@ def test_by_id(
         training_handler = EadroTrainingHandler(device)
         inference_handler = EadroInferenceHandler(device)
 
-        # First load metadata from training dataset
-        logger.info("Loading metadata from training dataset...")
-        _, metadata = data_handler.prepare_train_data_by_dataset_id(
-            config, train_dataset_id
-        )
-
-        # Then load test data using the metadata from training
-        logger.info("Loading test data...")
-        test_loader = data_handler.prepare_test_data_by_dataset_id(
-            config, test_dataset_id, metadata
+        # Load test data and metadata from training phase
+        logger.info("Loading test data and training metadata...")
+        test_loader, metadata = data_handler.prepare_test_data_by_dataset_id(
+            config, test_dataset_id, train_dataset_id
         )
 
         config.set("node_num", len(metadata.services))
@@ -710,7 +699,6 @@ def test_by_id(
         test_results = experiment_manager.run_inference(
             model=model,
             data=data,
-            checkpoint_path=checkpoint_path,
             load_best=False,
             save_results=True,
         )
@@ -720,6 +708,43 @@ def test_by_id(
     except Exception as e:
         logger.error(f"Testing failed: {str(e)}")
         raise
+
+
+@app.command()
+def get_best_checkpoint(
+    dataset_id: int = typer.Option(
+        ..., "--dataset-id", help="Dataset ID that was used for training"
+    ),
+    experiment_name: Optional[str] = typer.Option(
+        None,
+        "--experiment-name",
+        help="Custom experiment name (if used during training)",
+    ),
+) -> None:
+    """Get the best checkpoint path for a trained dataset"""
+    # 构造实验名称
+    if experiment_name is None:
+        experiment_name = f"train_dataset_{dataset_id}"
+
+    # 从实验管理器的checkpoint目录查找
+    from src.exp.config import Config
+
+    config = Config(Path("settings.toml"))
+
+    # 构造checkpoint目录路径
+    base_checkpoint_dir = Path(config.get("paths.ckpt"))
+    experiment_checkpoint_dir = base_checkpoint_dir / experiment_name
+
+    best_checkpoint_path = experiment_checkpoint_dir / "best_model.ckpt"
+
+    if not best_checkpoint_path.exists():
+        logger.error(f"No best checkpoint found for dataset {dataset_id}")
+        logger.info(f"Expected path: {best_checkpoint_path}")
+        logger.info(f"Experiment name: {experiment_name}")
+        return
+
+    logger.info(f"Best checkpoint for dataset {dataset_id}: {best_checkpoint_path}")
+    print(str(best_checkpoint_path))  # For easy script usage
 
 
 @app.command()
@@ -734,11 +759,6 @@ def pipeline_by_id(
         "settings.toml", "--config", help="Config file path"
     ),
     experiment_name: Optional[str] = typer.Option(None, help="Experiment name"),
-    checkpoint_path: Optional[str] = typer.Option(
-        None,
-        "--checkpoint",
-        help="Checkpoint path for testing (if not provided, will find latest from training)",
-    ),
 ) -> None:
     """Run complete pipeline: train with one dataset ID, then test with another dataset ID"""
     logger.info("Starting complete train-test pipeline...")
@@ -753,18 +773,14 @@ def pipeline_by_id(
     train_by_id(train_dataset_id, config_file, experiment_name)
     logger.info("Training completed!")
 
-    # Step 2: Test model
+    # Step 2: Test model (automatically uses best checkpoint)
     logger.info(f"Step 2: Testing model using dataset ID {test_dataset_id}...")
-    if checkpoint_path is None:
-        # TODO: 这里需要实现从实验管理器获取最新检查点的逻辑
-        raise ValueError("Please specify checkpoint path for testing")
-
     test_by_id(
         test_dataset_id,
-        train_dataset_id,
-        checkpoint_path,
+        train_dataset_id,  # Only used for metadata lookup
         config_file,
         f"{experiment_name}_test" if experiment_name else None,
+        None,  # No checkpoint_path - will automatically use best model
     )
     logger.info("Complete pipeline finished successfully!")
 
@@ -777,15 +793,11 @@ def inference_from_converted_datapack(
     datapack_path: Path = typer.Option(
         ..., "--datapack-path", help="Path to converted datapack directory"
     ),
-    config_file: Optional[str] = typer.Option(
-        "settings.toml", "--config", help="Config file path"
-    ),
 ) -> list:
     """Run inference on a single converted datapack (for RCABench platform integration)"""
     logger.info(f"Starting inference from converted datapack: {datapack_path}")
 
-    if config_file is None:
-        config_file = "settings.toml"
+    config_file = "settings.toml"
     config = Config(Path(config_file))
 
     try:
@@ -801,9 +813,10 @@ def inference_from_converted_datapack(
 
         device = "cuda" if config.get("training.gpu") else "cpu"
 
-        # Try to load metadata from cache first
+        # Try to load metadata from unified metadata directory
         dataset_name = config.get("dataset")
-        metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
+        metadata_dir = Path(config.get("paths.metadata"))
+        metadata_path = metadata_dir / f"{dataset_name}_metadata.pkl"
         metadata = None
 
         if metadata_path.exists():
@@ -815,10 +828,22 @@ def inference_from_converted_datapack(
         # Create model architecture (metadata will be created if needed during data loading)
         inference_handler = EadroInferenceHandler(device)
 
-        # Load checkpoint and run inference
+        # Load checkpoint properly - handle both checkpoint format and direct state_dict format
         from torch import load as torch_load
 
         checkpoint = torch_load(checkpoint_path_obj, map_location=device)
+
+        # Check if checkpoint contains metadata (our format) or is direct state_dict
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            # Our checkpoint format with metadata
+            model_state_dict = checkpoint["model_state_dict"]
+            logger.info(
+                f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')}"
+            )
+        else:
+            # Direct state_dict format
+            model_state_dict = checkpoint
+            logger.info("Loaded checkpoint as direct state_dict")
 
         # We need to create the model with the right dimensions
         # This will be handled by loading the data first
@@ -841,7 +866,8 @@ def inference_from_converted_datapack(
             config=config,
         )
 
-        model.load_state_dict(checkpoint)
+        # Load the correct state_dict into model
+        model.load_state_dict(model_state_dict)
         model = model.to(device)
 
         # Run inference
@@ -852,16 +878,20 @@ def inference_from_converted_datapack(
             metadata=metadata,
         )
 
-        # Extract service names from predictions
+        # Extract service names from predictions - 修复数组判断问题
         predictions = results["predictions"]
         service_names = []
 
         for pred_list in predictions:
-            # Take the top prediction
-            if pred_list and pred_list[0] != -1:
+            # 确保pred_list是list或array，并检查长度和第一个元素
+            if len(pred_list) > 0 and pred_list[0] != -1:
                 service_id = pred_list[0]
-                service_name = metadata.services[service_id].name
-                service_names.append(service_name)
+                # 确保service_id在有效范围内
+                if 0 <= service_id < len(metadata.services):
+                    service_name = metadata.services[service_id].name
+                    service_names.append(service_name)
+                else:
+                    logger.warning(f"Invalid service_id: {service_id}, skipping")
 
         # Return unique service names (preserve order)
         unique_service_names = list(dict.fromkeys(service_names))

@@ -190,11 +190,18 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
             test_dataset_folder if test_dataset_folder is not None else dataset_folder
         )
 
+        # 使用统一的 metadata 目录
+        metadata_dir = Path(config.get("paths.metadata"))
+
         # 新格式：{dataset}_{dataset_folder}_{label}_samples_batch_*.pkl
-        train_batch_pattern = (
-            f".cache/{dataset_name}_{dataset_folder}_{train_split}_samples_batch_*.pkl"
+        train_batch_pattern = str(
+            metadata_dir
+            / f"{dataset_name}_{dataset_folder}_{train_split}_samples_batch_*.pkl"
         )
-        test_batch_pattern = f".cache/{dataset_name}_{actual_test_folder}_{test_split}_samples_batch_*.pkl"
+        test_batch_pattern = str(
+            metadata_dir
+            / f"{dataset_name}_{actual_test_folder}_{test_split}_samples_batch_*.pkl"
+        )
 
         # Load training data
         train_batch_files = glob.glob(train_batch_pattern)
@@ -242,8 +249,8 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
             )
 
         # Load metadata - 总是加载train的metadata（无论当前处理的是train还是test）
-        metadata_path = Path(
-            f".cache/{dataset_name}_{dataset_folder}_train_metadata.pkl"
+        metadata_path = (
+            metadata_dir / f"{dataset_name}_{dataset_folder}_train_metadata.pkl"
         )
         if not metadata_path.exists():
             raise FileNotFoundError(
@@ -357,7 +364,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         )
 
         dataset_name = config.get("dataset")
-        dataset_config = config.get("datasets.rcabench")
+        dataset_config = config.get(f"datasets.{dataset_name}")
 
         sample_interval = int(dataset_config.get("sample_interval", 30))
         sample_step = int(dataset_config.get("sample_step", 30))
@@ -482,7 +489,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         )
 
         dataset_name = config.get("dataset")
-        dataset_config = config.get("datasets.rcabench")
+        dataset_config = config.get(f"datasets.{dataset_name}")
 
         sample_interval = int(dataset_config.get("sample_interval", 30))
         sample_step = int(dataset_config.get("sample_step", 30))
@@ -491,8 +498,9 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         trace_files = dataset_config.get("trace_files", [])
 
         all_train_samples = []
-        metadata = None
+        converted_datapacks = []
 
+        # 先转换所有 datapacks，收集它们用于创建完整元数据
         for datapack_info in datapacks_injections:
             injection_name = datapack_info.injection_name
 
@@ -515,18 +523,27 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
                 skip_finished=True,
             )
 
-            # Create metadata from first valid datapack
-            if metadata is None:
-                from src.preprocessing.processor import Processor
+            converted_datapacks.append(converted_input_path)
 
-                processor = Processor({}, conf="settings.toml")
-                processor.datapacks = [converted_input_path]
-                processor.derive_files()
-                metadata = processor.create_metadata()
-                logger.info(
-                    f"Created metadata from training datapack: {injection_name}"
-                )
+        if not converted_datapacks:
+            raise ValueError(
+                f"No valid datapacks found for training dataset ID {dataset_id}"
+            )
 
+        # 使用所有转换的 datapacks 创建完整元数据（等效于之前的方式）
+        logger.info(
+            f"Creating metadata from all {len(converted_datapacks)} datapacks..."
+        )
+        from src.preprocessing.processor import Processor
+
+        processor = Processor({}, conf="settings.toml")
+        processor.datapacks = converted_datapacks
+        processor.derive_files()
+        metadata = processor.create_metadata()
+        logger.info("Created complete metadata from all training datapacks")
+
+        # 现在处理每个 datapack 生成样本
+        for converted_input_path in converted_datapacks:
             # Process the converted datapack - use ALL samples for training
             samples = process_datapack_parallel(
                 converted_input_path,
@@ -543,12 +560,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
             all_train_samples.extend(samples)
             logger.info(
-                f"Processed training datapack {injection_name}: {len(samples)} samples"
-            )
-
-        if metadata is None:
-            raise ValueError(
-                f"No valid datapacks found for training dataset ID {dataset_id}"
+                f"Processed training datapack {converted_input_path.name}: {len(samples)} samples"
             )
 
         logger.info(
@@ -594,7 +606,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         )
 
         dataset_name = config.get("dataset")
-        dataset_config = config.get("datasets.rcabench")
+        dataset_config = config.get(f"datasets.{dataset_name}")
 
         sample_interval = int(dataset_config.get("sample_interval", 30))
         sample_step = int(dataset_config.get("sample_step", 30))
@@ -669,6 +681,16 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         # Load training samples from RCABench platform
         train_samples, metadata = self.load_train_data_by_dataset_id(config, dataset_id)
 
+        # Save metadata for later use in testing - 使用统一的metadata目录
+        dataset_name = config.get("dataset")
+        metadata_dir = Path(config.get("paths.metadata"))
+        metadata_dir.mkdir(exist_ok=True)
+        metadata_path = (
+            metadata_dir / f"{dataset_name}_dataset_{dataset_id}_metadata.pkl"
+        )
+        metadata.to_pkl(str(metadata_path))
+        logger.info(f"Saved training metadata to {metadata_path}")
+
         # Split training data into train and validation
         from src.eadro.handlers import EadroTrainingHandler
 
@@ -687,25 +709,65 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
 
         return train_loader, val_loader, metadata
 
-    def prepare_test_data_by_dataset_id(
+    def load_metadata_by_train_dataset_id(
         self,
         config: Config,
-        dataset_id: int,
-        metadata: DatasetMetadata,
-    ) -> DataLoader:
+        train_dataset_id: int,
+    ) -> DatasetMetadata:
         """
-        Prepare test data using dataset ID from RCABench platform
+        Load metadata that was saved during training phase
 
         Args:
             config: Configuration object
-            dataset_id: Dataset ID from RCABench platform for testing
-            metadata: Metadata from training data
+            train_dataset_id: Dataset ID that was used for training
 
         Returns:
-            Test data loader
+            Loaded metadata
         """
+        dataset_name = config.get("dataset")
+        metadata_dir = Path(config.get("paths.metadata"))
+        metadata_path = (
+            metadata_dir / f"{dataset_name}_dataset_{train_dataset_id}_metadata.pkl"
+        )
+
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"Training metadata not found at {metadata_path}. "
+                f"Please ensure you have trained with dataset ID {train_dataset_id} first."
+            )
+
+        metadata = DatasetMetadata.from_pkl(str(metadata_path))
+        if metadata is None:
+            raise ValueError(f"Failed to load metadata from {metadata_path}")
+
+        logger.info(f"Loaded training metadata from {metadata_path}")
+        return metadata
+
+    def prepare_test_data_by_dataset_id(
+        self,
+        config: Config,
+        test_dataset_id: int,
+        train_dataset_id: int,
+    ) -> Tuple[DataLoader, DatasetMetadata]:
+        """
+        Prepare test data using dataset ID from RCABench platform
+        Load metadata from training phase
+
+        Args:
+            config: Configuration object
+            test_dataset_id: Dataset ID from RCABench platform for testing
+            train_dataset_id: Dataset ID that was used for training (for metadata)
+
+        Returns:
+            Tuple of (test_loader, metadata)
+        """
+        # Load metadata from training phase
+        metadata = self.load_metadata_by_train_dataset_id(config, train_dataset_id)
+
         # Load test samples from RCABench platform
-        test_samples = self.load_test_data_by_dataset_id(config, dataset_id, metadata)
+        test_samples = self.load_test_data_by_dataset_id(
+            config, test_dataset_id, metadata
+        )
 
         # Create test dataset and loader
         test_dataset = ChunkDataset(test_samples, metadata)
@@ -720,7 +782,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
         )
 
         self.test_loader = test_loader
-        return test_loader
+        return test_loader, metadata
 
     def load_single_datapack_for_inference(
         self,
@@ -745,7 +807,7 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
             raise FileNotFoundError(f"Datapack directory not found: {datapack_path}")
 
         dataset_name = config.get("dataset")
-        dataset_config = config.get("datasets.rcabench")
+        dataset_config = config.get(f"datasets.{dataset_name}")
 
         sample_interval = int(dataset_config.get("sample_interval", 30))
         sample_step = int(dataset_config.get("sample_step", 30))
@@ -893,9 +955,10 @@ class EadroDataHandler(DataHandler[Tuple[DataLoader, DataLoader, DatasetMetadata
             Tuple of (train_loader, test_loader, metadata) - train_loader will be None
         """
         if metadata is None:
-            # Try to load metadata from cache or create new
+            # Try to load metadata from metadata directory
             dataset_name = config.get("dataset")
-            metadata_path = Path(f".cache/{dataset_name}_metadata.pkl")
+            metadata_dir = Path(config.get("paths.metadata"))
+            metadata_path = metadata_dir / f"{dataset_name}_metadata.pkl"
 
             if metadata_path.exists():
                 metadata = DatasetMetadata.from_pkl(str(metadata_path))
@@ -1344,4 +1407,5 @@ def create_eadro_model(
         device=device,
         config=config,
     )
+    return model.to(device)
     return model.to(device)

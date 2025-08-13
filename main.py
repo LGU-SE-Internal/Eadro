@@ -7,7 +7,7 @@ from rcabench_platform.v2.algorithms.spec import (
     AlgorithmArgs,
     global_algorithm_registry,
 )
-from rcabench_platform.v2.online.run_exp_platform import run
+from rcabench_platform.v2.cli.main import main
 
 from client import inference_from_converted_datapack
 
@@ -37,5 +37,5 @@ class Eadro(Algorithm):
 if __name__ == "__main__":
     registry = global_algorithm_registry()
     registry["eadro"] = Eadro
-    run(enable_builtin_algorithms=False)
-    run(enable_builtin_algorithms=False)
+    main(enable_builtin_algorithms=False)
+

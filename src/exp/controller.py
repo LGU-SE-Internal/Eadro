@@ -328,7 +328,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         is_best: bool = False,
         additional_data: Optional[ConfigDict] = None,
     ) -> str:
-        """Save model checkpoint"""
+        """Save model checkpoint - only save best model"""
         timestamp = datetime.now().isoformat()
 
         # Prepare checkpoint data
@@ -346,35 +346,13 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         if additional_data:
             checkpoint_data["additional_data"] = additional_data
 
-        # Save checkpoint files
         checkpoint_paths = []
 
-        # Regular checkpoint (based on frequency)
-        frequency = self.config.get("experiment.checkpoint_frequency")
-        assert frequency is not None, (
-            "experiment.checkpoint_frequency must be configured"
-        )
-        frequency = int(frequency)
-        if epoch % frequency == 0:
-            checkpoint_path = self.checkpoint_dir / f"checkpoint_epoch_{epoch:04d}.ckpt"
-            torch.save(checkpoint_data, checkpoint_path)
-            checkpoint_paths.append(str(checkpoint_path))
-            logger.info(f"Saved checkpoint at epoch {epoch}: {checkpoint_path}")
-
-        # Best checkpoint
+        # Only save best checkpoint and latest checkpoint
         if is_best:
             best_checkpoint_path = self.checkpoint_dir / "best_model.ckpt"
             torch.save(checkpoint_data, best_checkpoint_path)
-
-            # Timestamped best checkpoint
-            best_timestamped_path = (
-                self.checkpoint_dir / f"best_model_epoch_{epoch:04d}.ckpt"
-            )
-            torch.save(checkpoint_data, best_timestamped_path)
-
-            checkpoint_paths.extend(
-                [str(best_checkpoint_path), str(best_timestamped_path)]
-            )
+            checkpoint_paths.append(str(best_checkpoint_path))
 
             # Update best metrics
             self.metadata["best_metrics"] = metrics.copy()
@@ -384,15 +362,12 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                 f"Saved best checkpoint at epoch {epoch}: {best_checkpoint_path}"
             )
 
-        # Latest checkpoint (always save)
+        # Always save latest checkpoint (overwrite previous)
         latest_checkpoint_path = self.checkpoint_dir / "latest_model.ckpt"
         torch.save(checkpoint_data, latest_checkpoint_path)
         checkpoint_paths.append(str(latest_checkpoint_path))
-        logger.info(
-            f"Saved latest checkpoint at epoch {epoch}: {latest_checkpoint_path}"
-        )
 
-        # Update checkpoint registry
+        # Update checkpoint registry - only keep the latest entry
         checkpoint_info: CheckpointInfo = {
             "epoch": epoch,
             "timestamp": timestamp,
@@ -400,18 +375,14 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             "is_best": is_best,
             "paths": checkpoint_paths,
         }
-        self.metadata["checkpoints"].append(checkpoint_info)
+
+        # Only keep the latest checkpoint info
+        self.metadata["checkpoints"] = [checkpoint_info]
 
         # Update training info
         self.metadata["training_info"]["total_epochs"] = max(
             self.metadata["training_info"]["total_epochs"], epoch
         )
-
-        # Cleanup old checkpoints if needed
-        auto_cleanup = self.config.get("experiment.auto_cleanup")
-        assert auto_cleanup is not None, "experiment.auto_cleanup must be configured"
-        if auto_cleanup:
-            self._cleanup_checkpoints()
 
         self._save_metadata()
 
@@ -555,10 +526,24 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         self.metadata["status"] = "training"
         self._save_metadata()
 
-        # Early stopping configuration
-        best_metric = float("-inf")
+        # Early stopping configuration with min_delta
+        primary_metric = self.config.get("experiment.primary_metric")
+        assert primary_metric is not None, (
+            "experiment.primary_metric must be configured"
+        )
+
+        # 判断指标类型：损失类指标（越小越好）还是性能类指标（越大越好）
+        is_loss_metric = "loss" in primary_metric.lower()
+
+        if is_loss_metric:
+            best_metric = float("inf")  # 损失类指标初始化为无穷大
+        else:
+            best_metric = float("-inf")  # 性能类指标初始化为负无穷大
+
         patience_counter = 0
         patience = self.config.get("training.patience")
+        min_delta = self.config.get("training.min_delta", 1e-4)
+
         assert patience is not None, "training.patience must be configured"
         patience = int(patience)
 
@@ -574,12 +559,9 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                 )
                 self.log_metrics(epoch, train_metrics, "train")
 
-                # Validation phase
+                # Validation phase - 确保在每个epoch都进行验证
                 val_metrics = {}
-                if (
-                    val_data is not None
-                    and epoch % self.config.get("training.evaluation_epoch") == 0
-                ):
+                if val_data is not None:
                     val_metrics = self.training_handler.validate(
                         model, val_data, epoch=epoch
                     )
@@ -588,22 +570,67 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                 # Combine metrics
                 all_metrics = {**train_metrics, **val_metrics}
 
-                # Check if best model based on primary metric
-                primary_metric = self.config.get("experiment.primary_metric")
-                assert primary_metric is not None, (
-                    "experiment.primary_metric must be configured"
-                )
+                # Check if best model based on primary metric with min_delta
                 is_best = False
 
                 if primary_metric in all_metrics:
                     current_metric = all_metrics[primary_metric]
-                    if current_metric > best_metric:
-                        best_metric = current_metric
-                        is_best = True
-                        patience_counter = 0
-                        logger.info(f"New best {primary_metric}: {current_metric:.6f}")
+
+                    # 根据指标类型判断是否改进
+                    if is_loss_metric:
+                        # 损失类指标：当前值小于最佳值减去min_delta时为改进
+                        if current_metric < best_metric - min_delta:
+                            improvement = best_metric - current_metric
+                            best_metric = current_metric
+                            is_best = True
+                            patience_counter = 0  # 重置patience计数器
+                            logger.info(
+                                f"New best {primary_metric}: {current_metric:.6f} "
+                                f"(improvement: -{improvement:.6f}, min_delta: {min_delta}) "
+                                f"- resetting patience counter"
+                            )
+                        else:
+                            patience_counter += 1  # 没有改进时增加patience计数器
+                            if current_metric < best_metric:
+                                logger.info(
+                                    f"{primary_metric}: {current_metric:.6f} "
+                                    f"(no significant improvement, current best: {best_metric:.6f}, "
+                                    f"diff: -{best_metric - current_metric:.6f} < min_delta: {min_delta}) "
+                                    f"- patience: {patience_counter}/{patience}"
+                                )
+                            else:
+                                logger.info(
+                                    f"{primary_metric}: {current_metric:.6f} "
+                                    f"(worse than best: {best_metric:.6f}) "
+                                    f"- patience: {patience_counter}/{patience}"
+                                )
                     else:
-                        patience_counter += 1
+                        # 性能类指标：当前值大于最佳值加上min_delta时为改进
+                        if current_metric > best_metric + min_delta:
+                            improvement = current_metric - best_metric
+                            best_metric = current_metric
+                            is_best = True
+                            patience_counter = 0  # 重置patience计数器
+                            logger.info(
+                                f"New best {primary_metric}: {current_metric:.6f} "
+                                f"(improvement: +{improvement:.6f}, min_delta: {min_delta}) "
+                                f"- resetting patience counter"
+                            )
+                        else:
+                            patience_counter += 1  # 没有改进时增加patience计数器
+                            if current_metric > best_metric:
+                                logger.info(
+                                    f"{primary_metric}: {current_metric:.6f} "
+                                    f"(no significant improvement, current best: {best_metric:.6f}, "
+                                    f"diff: +{current_metric - best_metric:.6f} < min_delta: {min_delta}) "
+                                    f"- patience: {patience_counter}/{patience}"
+                                )
+                            else:
+                                logger.info(
+                                    f"{primary_metric}: {current_metric:.6f} "
+                                    f"(worse than best: {best_metric:.6f}) "
+                                    f"- patience: {patience_counter}/{patience}"
+                                )
 
                 # Save checkpoint
                 self.save_checkpoint(
@@ -619,20 +646,30 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                     for callback in callbacks:
                         callback(self, epoch, all_metrics)
 
-                # Early stopping check
+                # Early stopping check with patience - 只有当patience > 0且patience_counter达到上限时才早停
                 if patience > 0 and patience_counter >= patience:
                     logger.info(
-                        f"Early stopping at epoch {epoch} (patience: {patience}, "
-                        f"best {primary_metric}: {best_metric:.6f})"
+                        f"Early stopping at epoch {epoch + 1} after {patience_counter} epochs without improvement "
+                        f"(patience: {patience}, best {primary_metric}: {best_metric:.6f}, min_delta: {min_delta})"
                     )
                     break
 
                 epoch_time = (datetime.now() - epoch_start_time).total_seconds()
                 current_lr = optimizer.param_groups[0]["lr"] if optimizer else "N/A"
 
+                # 格式化验证指标显示
+                val_info = ""
+                if val_metrics:
+                    val_loss = val_metrics.get("val_loss", "N/A")
+                    hr_at_1 = val_metrics.get("HR@1", "N/A")
+                    if isinstance(val_loss, (int, float)):
+                        val_info = f", val_loss: {val_loss:.6f}"
+                    if isinstance(hr_at_1, (int, float)):
+                        val_info += f", HR@1: {hr_at_1:.6f}"
+
                 logger.info(
                     f"Epoch {epoch + 1}/{num_epochs} completed in {epoch_time:.2f}s, "
-                    f"lr: {current_lr}, {primary_metric}: {all_metrics.get(primary_metric, 'N/A')}"
+                    f"lr: {current_lr}{val_info}, patience: {patience_counter}/{patience}"
                 )
 
         except KeyboardInterrupt:
@@ -683,50 +720,10 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         return results
 
     def _cleanup_checkpoints(self) -> None:
-        """Cleanup old checkpoints based on configuration"""
-        max_checkpoints = self.config.get("experiment.max_checkpoints")
-        assert max_checkpoints is not None, (
-            "experiment.max_checkpoints must be configured"
-        )
-        max_checkpoints = int(max_checkpoints)
-
-        if len(self.metadata["checkpoints"]) <= max_checkpoints:
-            return
-
-        # Sort checkpoints by epoch (newest first)
-        checkpoints = sorted(
-            self.metadata["checkpoints"], key=lambda x: x["epoch"], reverse=True
-        )
-
-        # Keep the most recent checkpoints and best checkpoints
-        keep_checkpoints = checkpoints[:max_checkpoints]
-
-        # Add best checkpoints to keep list
-        best_checkpoints = [cp for cp in checkpoints if cp.get("is_best", False)]
-        for best_cp in best_checkpoints:
-            if best_cp not in keep_checkpoints:
-                keep_checkpoints.append(best_cp)
-
-        # Remove old checkpoint files
-        keep_epochs = {cp["epoch"] for cp in keep_checkpoints}
-        removed_count = 0
-
-        for checkpoint in checkpoints:
-            if checkpoint["epoch"] not in keep_epochs:
-                for path in checkpoint.get("paths", []):
-                    checkpoint_path = Path(path)
-                    if (
-                        checkpoint_path.exists()
-                        and "best_model" not in checkpoint_path.name
-                    ):
-                        checkpoint_path.unlink()
-                        removed_count += 1
-
-        # Update metadata
-        self.metadata["checkpoints"] = keep_checkpoints
-
-        if removed_count > 0:
-            logger.debug(f"Cleaned up {removed_count} old checkpoint files")
+        """Cleanup old checkpoints - simplified since we only keep best and latest"""
+        # No cleanup needed since we only save best_model.ckpt and latest_model.ckpt
+        # Both files are overwritten each time, so no accumulation of files
+        pass
 
     @classmethod
     def load_experiment(

@@ -1,4 +1,4 @@
-dataset = "rcabench"
+dataset = "rcabench_dataset_3"
 
 [datasets.sn]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
@@ -21,7 +21,7 @@ sample_interval = 20                                              # seconds. Mea
 sample_step = 2
 
 
-[datasets.rcabench]
+[datasets.rcabench_dataset_3]
 root_path = "data/rcabench_dataset"
 load_method = "all"
 log_files = ["abnormal_logs.parquet", "normal_logs.parquet"]
@@ -46,9 +46,9 @@ device = "cuda"          # cuda, cpu, or auto
 epochs = 200
 batch_size = 256
 lr = 0.001
-patience = 0            # Early stopping patience (number of epochs)
+patience = 10            # Early stopping patience (number of epochs) - 修改为10以启用early stopping
 min_delta = 1e-4         # Minimum change in validation loss to be considered improvement
-validation_ratio = 0.1   # Ratio of training data to use for validation
+validation_ratio = 0.3   # Ratio of training data to use for validation
 validation_frequency = 1 # Validate every N epochs
 train_ratio = 0.7
 evaluation_epoch = 10
@@ -125,6 +125,6 @@ result_dir = "result/"
 logs_dir = "logs"
 inference_dir = "inference"
 chunks_dir = "chunks/"
-cache_dir = ".cache/"
-metadata = "/mnt/jfs/experiment_storage/eadro/metadata"
-ckpt = "/mnt/jfs/experiment_storage/eadro/checkpoints"
+cache_dir = "metadata/"  # 改为使用 metadata 目录
+metadata = "metadata"    # 统一使用 metadata 目录
+ckpt = "checkpoints"

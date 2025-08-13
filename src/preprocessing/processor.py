@@ -1,32 +1,31 @@
+import functools
+import pickle
+import random
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import polars as pl
+from dynaconf import Dynaconf
+from loguru import logger
+from tqdm import tqdm
+
+from ..exp.config import Config
 from .base import (
-    DataProcessor,
-    DatasetMetadata,
     BaseParser,
-    ServiceMetadata,
-    MetricMetadata,
-    LogTemplateMetadata,
+    DataProcessor,
     DataSample,
+    DatasetMetadata,
+    LogTemplateMetadata,
+    MetricMetadata,
+    ServiceMetadata,
     TraceMetadata,
 )
-from dynaconf import Dynaconf
-from pathlib import Path
-import polars as pl
-from tqdm import tqdm
-from .log import DrainProcessor
-from datetime import datetime
-import numpy as np
-import pickle
-from loguru import logger
-from rcabench.openapi import InjectionApi, ApiClient, Configuration
-import random
-import time
-from .utils import fmap_processpool
-import functools
-from .log import preaggregate_logs
-from .trace import preaggregate_traces
-from .metric import preaggregate_metrics
 from .label import extract_eadro_labels, extract_rcabench_labels
-from ..exp.config import Config
+from .log import DrainProcessor, preaggregate_logs
+from .metric import preaggregate_metrics
+from .trace import preaggregate_traces
+from .utils import fmap_processpool
 
 
 def process_datapack_parallel(
@@ -46,7 +45,7 @@ def process_datapack_parallel(
 
     samples = []
 
-    if dataset == "rcabench":
+    if dataset.startswith("rcabench"):
         try:
             (
                 normal_st,
@@ -228,44 +227,53 @@ class Processor(DataProcessor):
     def _load_datapacks_from_folder(self, dataset_folder: str) -> list[Path]:
         """
         从指定的数据集文件夹加载数据包
-        
+
         Args:
             dataset_folder: 数据集文件夹名称（如 __dev__rcabench_test_r1）
-        
+
         Returns:
             数据包路径列表
         """
         folder_path = self.datapack_path / dataset_folder
-        
+
         if not folder_path.exists():
-            raise ValueError(f"Dataset folder '{dataset_folder}' not found at {folder_path}")
-        
+            raise ValueError(
+                f"Dataset folder '{dataset_folder}' not found at {folder_path}"
+            )
+
         if not folder_path.is_dir():
             raise ValueError(f"'{dataset_folder}' is not a directory")
-        
+
         # 收集该文件夹下的所有案例目录
         case_dirs = [case_dp for case_dp in folder_path.iterdir() if case_dp.is_dir()]
-        
+
         if not case_dirs:
             raise ValueError(f"No case directories found in '{dataset_folder}'")
-        
+
         valid_packs = []
         for pack in case_dirs:
             if self._validate_datapack(pack):
                 valid_packs.append(pack)
 
         if not valid_packs:
-            raise ValueError(f"No valid datapacks found in '{dataset_folder}' after validation.")
+            raise ValueError(
+                f"No valid datapacks found in '{dataset_folder}' after validation."
+            )
 
         logger.info(
             f"Loaded {len(valid_packs)} valid datapacks from folder '{dataset_folder}' out of {len(case_dirs)} total."
         )
         return valid_packs
 
-    def process_dataset(self, use_parallel: bool = False, n_workers: int | None = None, split: str = "train"):
+    def process_dataset(
+        self,
+        use_parallel: bool = False,
+        n_workers: int | None = None,
+        split: str = "train",
+    ):
         """
         处理数据集
-        
+
         Args:
             use_parallel: 是否使用并行处理
             n_workers: 工作进程数量
@@ -319,9 +327,7 @@ class Processor(DataProcessor):
                 for datapack_samples in batch_results:
                     batch_samples.extend(datapack_samples)
 
-                batch_file = (
-                    f".cache/{self.dataset}_{split}_samples_batch_{i // n_workers + 1}.pkl"
-                )
+                batch_file = f".cache/{self.dataset}_{split}_samples_batch_{i // n_workers + 1}.pkl"
                 Path(".cache").mkdir(exist_ok=True)
                 with open(batch_file, "wb") as f:
                     pickle.dump(batch_samples, f)
@@ -332,23 +338,31 @@ class Processor(DataProcessor):
                 del batch_samples
                 del batch_results
 
-    def process_dataset_folder(self, dataset_folder: str, label: str, use_parallel: bool = False, n_workers: int | None = None):
+    def process_dataset_folder(
+        self,
+        dataset_folder: str,
+        label: str,
+        use_parallel: bool = False,
+        n_workers: int | None = None,
+    ):
         """
         处理指定文件夹的数据集
-        
+
         Args:
             dataset_folder: 数据集文件夹名称（如 __dev__rcabench_test_r1）
             label: 数据集标签（train 或 test）
             use_parallel: 是否使用并行处理
             n_workers: 工作进程数量
         """
-        assert label in ["train", "test"], f"Label must be 'train' or 'test', got {label}"
-        
+        assert label in ["train", "test"], (
+            f"Label must be 'train' or 'test', got {label}"
+        )
+
         logger.info(f"Processing dataset folder: {dataset_folder} with label: {label}")
-        
+
         self.derive_files()
         self.datapacks = self._load_datapacks_from_folder(dataset_folder)
-        
+
         self.metadata = self.create_metadata_for_folder(dataset_folder, label)
 
         if use_parallel and len(self.datapacks) > 1:
@@ -395,11 +409,14 @@ class Processor(DataProcessor):
                 for datapack_samples in batch_results:
                     batch_samples.extend(datapack_samples)
 
-                # 使用包含数据集文件夹名称的文件名，避免覆盖
+                # 使用统一的metadata目录保存样本
+                metadata_dir = Path(self.config.get("paths.metadata"))
+                metadata_dir.mkdir(exist_ok=True)
                 batch_file = (
-                    f".cache/{self.dataset}_{dataset_folder}_{label}_samples_batch_{i // n_workers + 1}.pkl"
+                    metadata_dir
+                    / f"{self.dataset}_{dataset_folder}_{label}_samples_batch_{i // n_workers + 1}.pkl"
                 )
-                Path(".cache").mkdir(exist_ok=True)
+
                 with open(batch_file, "wb") as f:
                     pickle.dump(batch_samples, f)
                 logger.info(
@@ -408,7 +425,6 @@ class Processor(DataProcessor):
 
                 del batch_samples
                 del batch_results
-                
 
     def derive_files(self):
         def load(f) -> list[str]:
@@ -676,13 +692,26 @@ class Processor(DataProcessor):
         )
         return metadata
 
-    def create_metadata_for_folder(self, dataset_folder: str, label: str) -> DatasetMetadata:
+    def create_metadata_for_folder(
+        self, dataset_folder: str, label: str
+    ) -> DatasetMetadata:
         if label == "train":
             metadata = self.create_metadata()
-            
-            Path(".cache").mkdir(exist_ok=True)
-            metadata.to_pkl(f".cache/{self.dataset}_{dataset_folder}_train_metadata.pkl")
-            metadata.to_json(f".cache/{self.dataset}_{dataset_folder}_train_metadata.json")
+
+            # 使用统一的metadata目录
+            metadata_dir = Path(self.config.get("paths.metadata"))
+            metadata_dir.mkdir(exist_ok=True)
+            metadata.to_pkl(
+                str(
+                    metadata_dir / f"{self.dataset}_{dataset_folder}_train_metadata.pkl"
+                )
+            )
+            metadata.to_json(
+                str(
+                    metadata_dir
+                    / f"{self.dataset}_{dataset_folder}_train_metadata.json"
+                )
+            )
             return metadata
         else:
             return DatasetMetadata(dataset_name=self.dataset)
