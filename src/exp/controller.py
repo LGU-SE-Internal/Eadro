@@ -1,21 +1,21 @@
 import json
-import torch
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import (
-    Dict,
-    Optional,
-    List,
     Callable,
-    TypeVar,
+    Dict,
     Generic,
-    Protocol,
-    Union,
+    List,
     Literal,
+    Optional,
+    Protocol,
     TypedDict,
+    TypeVar,
+    Union,
 )
 
+import torch
 from loguru import logger
 
 from .config import Config
@@ -539,7 +539,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
             ]
         ] = None,
     ) -> ConfigDict:
-        """Run training loop"""
+        """Run training loop with early stopping, checkpoint saving, and metrics tracking"""
         assert self.training_handler is not None, "Training handler not provided"
 
         if num_epochs is None:
@@ -555,6 +555,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         self.metadata["status"] = "training"
         self._save_metadata()
 
+        # Early stopping configuration
         best_metric = float("-inf")
         patience_counter = 0
         patience = self.config.get("training.patience")
@@ -587,7 +588,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                 # Combine metrics
                 all_metrics = {**train_metrics, **val_metrics}
 
-                # Check if best model
+                # Check if best model based on primary metric
                 primary_metric = self.config.get("experiment.primary_metric")
                 assert primary_metric is not None, (
                     "experiment.primary_metric must be configured"
@@ -600,6 +601,7 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                         best_metric = current_metric
                         is_best = True
                         patience_counter = 0
+                        logger.info(f"New best {primary_metric}: {current_metric:.6f}")
                     else:
                         patience_counter += 1
 
@@ -618,18 +620,19 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
                         callback(self, epoch, all_metrics)
 
                 # Early stopping check
-                if patience_counter >= patience:
+                if patience > 0 and patience_counter >= patience:
                     logger.info(
-                        f"Early stopping at epoch {epoch} (patience: {patience})"
+                        f"Early stopping at epoch {epoch} (patience: {patience}, "
+                        f"best {primary_metric}: {best_metric:.6f})"
                     )
                     break
 
                 epoch_time = (datetime.now() - epoch_start_time).total_seconds()
-
                 current_lr = optimizer.param_groups[0]["lr"] if optimizer else "N/A"
 
-                logger.debug(
-                    f"Epoch {epoch} completed in {epoch_time:.2f}s, lr: {current_lr}"
+                logger.info(
+                    f"Epoch {epoch + 1}/{num_epochs} completed in {epoch_time:.2f}s, "
+                    f"lr: {current_lr}, {primary_metric}: {all_metrics.get(primary_metric, 'N/A')}"
                 )
 
         except KeyboardInterrupt:
@@ -645,7 +648,10 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         self.metadata["status"] = "completed"
         self._save_metadata()
 
-        logger.info(f"Training completed in {training_time:.2f}s")
+        logger.info(
+            f"Training completed in {training_time:.2f}s. "
+            f"Best {primary_metric}: {best_metric:.6f}"
+        )
 
         return self.get_experiment_summary()
 
@@ -761,6 +767,10 @@ class UniversalExperimentManager(Generic[ModelT, DataT, OptimizerT]):
         exp_manager.inference_handler = inference_handler
 
         # Setup logging
+        exp_manager._setup_logging()
+
+        logger.info(f"Loaded existing experiment: {experiment_name}")
+        return exp_manager
         exp_manager._setup_logging()
 
         logger.info(f"Loaded existing experiment: {experiment_name}")
