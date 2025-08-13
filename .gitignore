@@ -9,7 +9,5 @@ wandb
 dataset_output_debug
 data
 .cache
-cache
 *.log
 output
-temp

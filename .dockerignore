@@ -1,6 +1,5 @@
 .venv
 .vscode
-cache
 dataset_output
 hawkes_service
 result
