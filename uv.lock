@@ -676,7 +676,7 @@ requires-dist = [
     { name = "pympler", specifier = ">=1.1" },
     { name = "rcabench", specifier = ">=1.0.47" },
     { name = "rcabench", specifier = ">=1.1.30" },
-    { name = "rcabench-platform", specifier = ">=0.3.25" },
+    { name = "rcabench-platform", specifier = ">=0.3.26" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff" },
     { name = "scikit-learn" },
@@ -2699,7 +2699,7 @@ wheels = [
 
 [[package]]
 name = "rcabench-platform"
-version = "0.3.25"
+version = "0.3.26"
 source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
 dependencies = [
     { name = "clickhouse-connect" },
@@ -2724,9 +2724,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/f4/12/4cc4e23e07a2c7e801b70d6e70c36a00deea4c76cb3ee11ab34b49e86726/rcabench_platform-0.3.25.tar.gz", hash = "sha256:5b6aa7b2d3b40fd9060d040dc0a71273802eb3a42e87e509277fbf29917064db", size = 73167, upload-time = "2025-08-13T16:02:54.878Z" }
+sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/24/ce/dfd8b9171d3d64075127933bde65981ba12960dd19650b7f7f2b2ce1548e/rcabench_platform-0.3.26.tar.gz", hash = "sha256:f33963c9c949d9f460dad42ca4541ac01a63fe154b1229c467b412253b969725", size = 73162, upload-time = "2025-08-14T06:54:11.349Z" }
 wheels = [
-    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/8a/20/c6c26afac58c43609131534f976c677fcbc529ac8c6e40a435e9bce0535f/rcabench_platform-0.3.25-py3-none-any.whl", hash = "sha256:2143535474ea83fc8e93ef43d1a45e3c052bb238ef896fd5c730e5524d416fcf", size = 103513, upload-time = "2025-08-13T16:02:53.578Z" },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/b0/2b/b033c5738cdcb5a658291a29f0bcb5e1ec492d78701227c04103b8c14273/rcabench_platform-0.3.26-py3-none-any.whl", hash = "sha256:5cf31414343eb58192b6cf81a33fb72016a077c63e76cb77358df73e5bcdb47b", size = 103515, upload-time = "2025-08-14T06:54:10.257Z" },
 ]
 
 [[package]]

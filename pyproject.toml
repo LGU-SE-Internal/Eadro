@@ -25,7 +25,7 @@ dependencies = [
     "ipykernel>=6.29.5",
     "pympler>=1.1",
     "dynaconf>=3.2.11",
-    "rcabench-platform>=0.3.25",
+    "rcabench-platform>=0.3.26",
     "rcabench>=1.1.30",
 ]
 [tool.uv.sources]
