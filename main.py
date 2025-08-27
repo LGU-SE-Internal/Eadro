@@ -14,7 +14,7 @@ from client import inference_from_converted_datapack
 
 class Eadro(Algorithm):
     def needs_cpu_count(self) -> int | None:
-        return None
+        return 30
 
     def __call__(self, args: AlgorithmArgs) -> list[AlgorithmAnswer]:
         ckpt_path = os.environ["CHECKPOINT_PATH"]

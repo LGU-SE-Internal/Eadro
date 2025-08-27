@@ -1,4 +1,4 @@
-dataset = "rcabench_dataset_3"
+dataset = "rcabench_dataset_17"
 
 [datasets.sn]
 root_path = "/mnt/jfs/rcabench-platform-v2/data/Eadro/SN_Dataset"
@@ -21,7 +21,7 @@ sample_interval = 20                                              # seconds. Mea
 sample_step = 2
 
 
-[datasets.rcabench_dataset_3]
+[datasets.rcabench_dataset_17]
 root_path = "data/rcabench_dataset"
 load_method = "all"
 log_files = ["abnormal_logs.parquet", "normal_logs.parquet"]

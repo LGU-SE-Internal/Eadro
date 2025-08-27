@@ -43,7 +43,13 @@ def get_dataset(id: int):
 
 
 @timeit()
-def run_job(algorithm, algorithm_id: int, injection_id: int, injection_name: str, label: str | None = None):
+def run_job(
+    algorithm,
+    algorithm_id: int,
+    injection_id: int,
+    injection_name: str,
+    label: str | None = None,
+):
     """
     Plain, top-level worker function (no decorators, no Typer annotations).
     Safe to use from multiprocessing pools.
@@ -60,7 +66,7 @@ def run_job(algorithm, algorithm_id: int, injection_id: int, injection_name: str
     )
 
     a = algorithm()
-
+    t0 = time.time()
     answers = a(
         AlgorithmArgs(
             dataset="rcabench",
@@ -69,12 +75,16 @@ def run_job(algorithm, algorithm_id: int, injection_id: int, injection_name: str
             output_folder=Path("/tmp/baro_output") / injection_name,
         )
     )
+    t1 = time.time()
+    runtime = t1 - t0
 
     result_rows = [
         {"level": ans.level, "result": ans.name, "rank": ans.rank, "confidence": 0}
         for ans in answers
     ]
-
+    if len(answers) == 0:
+        logger.warning(f"No answers from algorithm `{algorithm}`")
+        return
     with RCABenchClient() as client:
         algo_api = AlgorithmsApi(client)
 
@@ -93,6 +103,7 @@ def run_job(algorithm, algorithm_id: int, injection_id: int, injection_name: str
                     for row in result_rows
                 ],
                 datapack_id=injection_id,
+                duration=runtime,
             ),
         )
         logger.info(
@@ -228,8 +239,8 @@ def single_test(name: str = "ts3-ts-basic-service-request-replace-method-4css6n"
 def batch_test(label: str | None = None):
     run_batch(
         algorithm=Eadro,
-        algorithm_id=49,
-        datasets=[2, 3, 4, 5],
+        algorithm_id=76,
+        datasets=[18],
         label=label
     )
 
