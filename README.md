@@ -11,10 +11,6 @@ Eadro 是一个基于多模态数据融合的分布式系统故障诊断与根�
 ```bash
 uv sync
 
-# 挂载数据集（需要根据实际环境调整）
-sudo juicefs mount redis://10.10.10.119:6379/1 /mnt/jfs -d --cache-size=1024
-mkdir -p data
-ln -s /mnt/jfs/rcabench_dataset ./data/
 ```
 
 ### 环境变量配置
@@ -29,7 +25,7 @@ export CHECKPOINT_PATH=checkpoints/train_dataset_17/best_model.ckpt
 ### 模型训练
 
 ```bash
-sudo -E .venv/bin/python client.py train-by-id --dataset-id 17
+sudo -E .venv/bin/python client.py train-by-id --dataset-id dataset_id
 ```
 
 
@@ -52,12 +48,12 @@ rca upload-algorithm-harbor ./
 ### 批量测试
 
 ```bash
-sudo -E .venv/bin/python run.py batch-test --label 8.26run
+sudo -E .venv/bin/python run.py batch-test --label your_label
 ```
 
 ### 指标评估
 
 ```bash
 # 使用最新平台进行评估
-rca cross-dataset-metrics -a eadro -d pair-diag -dv study-test --tag 8.26run
+rca cross-dataset-metrics -a eadro -d pair-diag -dv study-test --tag your_label
 ```
