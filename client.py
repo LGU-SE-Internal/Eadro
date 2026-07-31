@@ -277,6 +277,7 @@ def inference(
             processor.trace_files,
             "drain.ini",
             "cache/drain/temp",
+            load_labels=False,
         )
 
         logger.info(f"Generated {len(samples)} samples for inference")

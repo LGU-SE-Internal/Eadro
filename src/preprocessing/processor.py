@@ -25,7 +25,11 @@ import functools
 from .log import preaggregate_logs
 from .trace import preaggregate_traces
 from .metric import preaggregate_metrics
-from .label import extract_eadro_labels, extract_rcabench_labels
+from .label import (
+    extract_eadro_labels,
+    extract_rcabench_labels,
+    extract_rcabench_time_ranges,
+)
 from ..exp.config import Config
 
 
@@ -40,6 +44,7 @@ def process_datapack_parallel(
     trace_files: list[str],
     drain_config_path: str = "drain.ini",
     drain_save_path: str = "cache/drain/temp",
+    load_labels: bool = True,
 ) -> list[DataSample]:
     config = Dynaconf(settings_files=["settings.toml"])
     dataset_config = getattr(config, "datasets", {}).get(dataset, {})  # type: ignore
@@ -48,14 +53,21 @@ def process_datapack_parallel(
 
     if dataset == "rcabench":
         try:
-            (
-                normal_st,
-                normal_et,
-                abnormal_st,
-                abnormal_et,
-                gt_service,
-                fault_type,
-            ) = extract_rcabench_labels(datapack, dataset_config)
+            if load_labels:
+                (
+                    normal_st,
+                    normal_et,
+                    abnormal_st,
+                    abnormal_et,
+                    gt_service,
+                    fault_type,
+                ) = extract_rcabench_labels(datapack, dataset_config)
+            else:
+                normal_st, normal_et, abnormal_st, abnormal_et = (
+                    extract_rcabench_time_ranges(datapack, dataset_config)
+                )
+                gt_service = ""
+                fault_type = ""
         except Exception as e:
             logger.error(f"Failed to extract labels for {datapack}: {e}")
             return []

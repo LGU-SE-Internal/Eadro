@@ -9,6 +9,9 @@ from typing import Any
 def extract_rcabench_labels(
     datapack: Path, config: Any
 ) -> tuple[datetime, datetime, datetime, datetime, str, str]:
+    normal_st, normal_et, abnormal_st, abnormal_et = extract_rcabench_time_ranges(
+        datapack, config
+    )
     label_file = config.get("label_files")
 
     assert label_file is not None, (
@@ -29,6 +32,27 @@ def extract_rcabench_labels(
 
     assert "fault_type" in injection
     fault_type = injection.get("fault_type")
+
+    return (
+        normal_st,
+        normal_et,
+        abnormal_st,
+        abnormal_et,
+        gt_services[0],
+        fault_type,
+    )
+
+
+def extract_rcabench_time_ranges(
+    datapack: Path, config: Any
+) -> tuple[datetime, datetime, datetime, datetime]:
+    label_file = config.get("label_files")
+
+    assert label_file is not None, (
+        "Label file for dataset is not defined in the config."
+    )
+    assert isinstance(label_file, list)
+    assert "env.json" in label_file
 
     with open(datapack / "env.json", "r") as f:
         env = json.load(f)
@@ -54,14 +78,7 @@ def extract_rcabench_labels(
         int(env["ABNORMAL_END"]), pytz.UTC
     ) - timedelta(hours=8)
 
-    return (
-        normal_st,
-        normal_et,
-        abnormal_st,
-        abnormal_et,
-        gt_services[0],
-        fault_type,
-    )
+    return normal_st, normal_et, abnormal_st, abnormal_et
 
 
 def extract_eadro_labels(
